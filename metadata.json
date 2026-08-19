@@ -1,0 +1,7 @@
+{
+  "name": "Overdesk Copilot",
+  "description": "Floating stealth AI interview assistant that listens to audio, transcribes live questions, reads screen coding challenges, and delivers instant tailored responses.",
+  "requestFramePermissions": ["microphone", "display-capture"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

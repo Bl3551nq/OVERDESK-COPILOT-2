@@ -1,0 +1,225 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { motion } from 'motion/react';
+import { FloatingPanel } from './components/FloatingPanel';
+import { ScreenChallengeModal } from './components/ScreenChallengeModal';
+import { StealthAndExeModal } from './components/StealthAndExeModal';
+import { UserSettings } from './types';
+import { CopilotSpeechManager } from './utils/speech';
+
+const DEFAULT_SETTINGS: UserSettings = {
+  persona: 'coding',
+  modelChoice: 'gemini-3.7-flash',
+  resumeRawText: '',
+  candidateSummary: 'Senior Software Engineer with 6+ years building distributed cloud systems, high-throughput microservices, React/TypeScript frontends, and scalable databases.',
+  interviewContext: 'Senior Software Engineering Role, distributed architecture, API design, performance optimization, and system resilience.',
+  sentenceLength: 'medium',
+  hideFromScreenShare: true,
+  autoTriggerOnSilence: true,
+  audioInputSource: 'mic',
+  speechTtsEnabled: false,
+  windowOpacity: 0.98,
+};
+
+export default function App() {
+  const [settings, setSettings] = useState<UserSettings>(() => {
+    try {
+      const saved = localStorage.getItem('overdesk_copilot_settings');
+      return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS;
+    } catch {
+      return DEFAULT_SETTINGS;
+    }
+  });
+
+  const [isListening, setIsListening] = useState(false);
+  const [currentTranscript, setCurrentTranscript] = useState(
+    '"So walk me through how you\'d approach scaling this system..."'
+  );
+  const [suggestedAnswer, setSuggestedAnswer] = useState(
+    "I'd start by isolating the primary bottleneck—determining whether the workload is read-heavy or write-heavy—then implement an aggressive caching layer with Redis or partition databases horizontally using consistent hashing to maintain sub-50ms P99 latency."
+  );
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [audioLevel, setAudioLevel] = useState(0);
+  const [sessionDurationSec, setSessionDurationSec] = useState(0);
+
+  // Modals
+  const [isScreenModalOpen, setIsScreenModalOpen] = useState(false);
+  const [isStealthModalOpen, setIsStealthModalOpen] = useState(false);
+
+  // Speech manager ref
+  const speechManagerRef = useRef<CopilotSpeechManager | null>(null);
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Save settings
+  const handleUpdateSettings = (newSettings: Partial<UserSettings>) => {
+    setSettings((prev) => {
+      const updated = { ...prev, ...newSettings };
+      try {
+        localStorage.setItem('overdesk_copilot_settings', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Failed to persist settings:', e);
+      }
+      return updated;
+    });
+  };
+
+  // Timer effect for active session
+  useEffect(() => {
+    let interval: any = null;
+    if (isListening) {
+      interval = setInterval(() => {
+        setSessionDurationSec((prev) => prev + 1);
+      }, 1000);
+    } else {
+      clearInterval(interval);
+    }
+    return () => clearInterval(interval);
+  }, [isListening]);
+
+  // Request backend answer
+  const fetchAnswer = async (
+    question: string,
+    mode: 'generate' | 'shorter' | 'rephrase' | 'regenerate' = 'generate'
+  ) => {
+    if (!question && !suggestedAnswer) return;
+    setIsGenerating(true);
+
+    try {
+      const res = await fetch('/api/copilot/answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question,
+          persona: settings.persona,
+          modelChoice: settings.modelChoice || 'gemini-3.7-flash',
+          resumeText: settings.candidateSummary || settings.resumeRawText,
+          interviewContext: settings.interviewContext,
+          sentenceLength: settings.sentenceLength,
+          mode,
+          previousAnswer: suggestedAnswer,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.answer) {
+        setSuggestedAnswer(data.answer);
+      } else if (data.fallback) {
+        setSuggestedAnswer(data.fallback);
+      }
+    } catch (err) {
+      console.error('Answer generation error:', err);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // Start / Stop Interview listening
+  const handleToggleInterview = async () => {
+    if (isListening) {
+      // Stop session
+      if (speechManagerRef.current) {
+        speechManagerRef.current.stopListening();
+      }
+      setIsListening(false);
+      setAudioLevel(0);
+    } else {
+      // Start session
+      if (!speechManagerRef.current) {
+        speechManagerRef.current = new CopilotSpeechManager();
+      }
+
+      setIsListening(true);
+      setSessionDurationSec(0);
+
+      await speechManagerRef.current.startListening({
+        onInterimText: (text) => {
+          setCurrentTranscript(text);
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current);
+          }
+        },
+        onFinalText: (text) => {
+          setCurrentTranscript(text);
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current);
+          }
+          silenceTimerRef.current = setTimeout(() => {
+            fetchAnswer(text, 'generate');
+          }, 1200);
+        },
+        onError: (err) => {
+          console.warn('Speech recognition warning:', err);
+        },
+        onAudioLevel: (level) => {
+          setAudioLevel(level);
+        },
+      });
+    }
+  };
+
+  // Action handlers
+  const handleAction = (
+    action: 'generate' | 'shorter' | 'rephrase' | 'regenerate',
+    customPrompt?: string
+  ) => {
+    const q = customPrompt || currentTranscript;
+    fetchAnswer(q, action);
+  };
+
+  const handleSelectPresetQuestion = (question: string) => {
+    setCurrentTranscript(question);
+    fetchAnswer(question, 'generate');
+  };
+
+  return (
+    <div className="relative min-h-screen w-full flex items-center justify-center p-4 sm:p-8 bg-transparent">
+      {/* Floating Movable Glassmorphic Overlay Panel */}
+      <motion.div
+        drag
+        dragMomentum={false}
+        initial={{ scale: 0.98, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ duration: 0.2 }}
+        className="relative z-30 max-w-[390px] w-full"
+      >
+        <FloatingPanel
+          settings={settings}
+          onUpdateSettings={handleUpdateSettings}
+          isListening={isListening}
+          onToggleInterview={handleToggleInterview}
+          currentTranscript={currentTranscript}
+          suggestedAnswer={suggestedAnswer}
+          isGenerating={isGenerating}
+          audioLevel={audioLevel}
+          onAction={handleAction}
+          onOpenScreenModal={() => setIsScreenModalOpen(true)}
+          onOpenStealthModal={() => setIsStealthModalOpen(true)}
+          sessionDurationSec={sessionDurationSec}
+          onSelectPresetQuestion={handleSelectPresetQuestion}
+          onResetSession={() => {
+            setCurrentTranscript('');
+            setSuggestedAnswer('');
+            setSessionDurationSec(0);
+          }}
+        />
+      </motion.div>
+
+      {/* Screen Vision / Challenge OCR Modal */}
+      <ScreenChallengeModal
+        isOpen={isScreenModalOpen}
+        onClose={() => setIsScreenModalOpen(false)}
+        persona={settings.persona}
+        interviewContext={settings.interviewContext}
+        onApplySolutionAsAnswer={(solutionText) => {
+          setSuggestedAnswer(solutionText);
+          setCurrentTranscript('Screen Coding / Design Challenge Analysis');
+        }}
+      />
+
+      {/* Stealth Screen-Share Info & Exe Packaging Modal */}
+      <StealthAndExeModal
+        isOpen={isStealthModalOpen}
+        onClose={() => setIsStealthModalOpen(false)}
+      />
+    </div>
+  );
+}

@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+html, body, #root {
+  background: transparent !important;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  width: 100%;
+  overflow: hidden;
+}
+
+/* Completely hide scrollbars everywhere while keeping smooth scrolling functionality */
+* {
+  scrollbar-width: none !important; /* Firefox */
+  -ms-overflow-style: none !important; /* IE and Edge */
+}
+
+*::-webkit-scrollbar {
+  display: none !important; /* Chrome, Safari, Opera */
+  width: 0 !important;
+  height: 0 !important;
+}
