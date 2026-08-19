@@ -24,14 +24,16 @@ import {
   Info,
   Maximize2,
   Minimize2,
+  Type,
 } from 'lucide-react';
-import { UserSettings, PersonaType, SentenceLength, TranscriptItem } from '../types';
+import { UserSettings, PersonaType, SentenceLength, TranscriptItem, AppFontSize } from '../types';
 import { PERSONAS, PersonaInfo, SAMPLE_QUESTIONS } from '../utils/presets';
 import { speakAnswerWhisper, stopSpeaking } from '../utils/speech';
 
 interface FloatingPanelProps {
   settings: UserSettings;
   onUpdateSettings: (newSettings: Partial<UserSettings>) => void;
+  onStartDrag?: (event: React.PointerEvent | React.MouseEvent) => void;
   isListening: boolean;
   onToggleInterview: () => void;
   currentTranscript: string;
@@ -50,6 +52,7 @@ interface FloatingPanelProps {
 export const FloatingPanel: React.FC<FloatingPanelProps> = ({
   settings,
   onUpdateSettings,
+  onStartDrag,
   isListening,
   onToggleInterview,
   currentTranscript,
@@ -68,20 +71,26 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
   const [isWhispering, setIsWhispering] = useState(false);
   const [showPresetsDropdown, setShowPresetsDropdown] = useState(false);
   const [customQuestionInput, setCustomQuestionInput] = useState('');
-  const [panelHeight, setPanelHeight] = useState(590);
+  const ORIGINAL_HEIGHT = 580;
+  const MAX_HEIGHT = Math.round(ORIGINAL_HEIGHT * 1.5); // 870px (1.5x original)
+  const MIN_HEIGHT = ORIGINAL_HEIGHT; // Cannot go below normal original size when not minimized
+
+  const [panelHeight, setPanelHeight] = useState(ORIGINAL_HEIGHT);
   const [isResizing, setIsResizing] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [resumeParsing, setResumeParsing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const initialTopRef = useRef<number>(0);
 
-  // Bottom resize drag handler
+  // Bottom resize drag handler (strictly resizes only from bottom downwards, bounded between ORIGINAL_HEIGHT and 1.5x ORIGINAL_HEIGHT)
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing || !panelRef.current) return;
-      const panelRect = panelRef.current.getBoundingClientRect();
-      const newHeight = Math.min(850, Math.max(380, e.clientY - panelRect.top));
-      setPanelHeight(newHeight);
+      const topAnchor = initialTopRef.current || panelRef.current.getBoundingClientRect().top;
+      const rawHeight = e.clientY - topAnchor;
+      const clampedHeight = Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, rawHeight));
+      setPanelHeight(clampedHeight);
     };
 
     const handleMouseUp = () => {
@@ -171,6 +180,22 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
   };
 
   const currentPersonaInfo = PERSONAS[settings.persona] || PERSONAS.coding;
+  const fontSize = settings.fontSize || 'normal';
+
+  // Dynamic font sizing classes
+  const transcriptFontClass =
+    fontSize === 'small'
+      ? 'text-[12.5px]'
+      : fontSize === 'large'
+      ? 'text-[15.5px]'
+      : 'text-[14px]';
+
+  const answerFontClass =
+    fontSize === 'small'
+      ? 'text-[13px]'
+      : fontSize === 'large'
+      ? 'text-[16.5px]'
+      : 'text-[14.5px]';
 
   return (
     <div
@@ -182,8 +207,16 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
       }}
       className="relative w-full max-w-[410px] rounded-[24px] overflow-hidden flex flex-col backdrop-blur-[36px] bg-neutral-950/95 border border-neutral-800/90 shadow-[0_24px_70px_rgba(0,0,0,0.92),inset_0_1px_1px_rgba(255,255,255,0.08)] text-neutral-100 transition-opacity duration-200 select-none"
     >
-      {/* ================= TITLEBAR (Dark & Stealth) ================= */}
-      <div className="relative z-10 flex items-center justify-between px-4 py-3 border-b border-neutral-800/90 cursor-grab active:cursor-grabbing bg-neutral-950/90">
+      {/* ================= TITLEBAR (Dark & Stealth & Drag Anchor) ================= */}
+      <div
+        onPointerDown={(e) => {
+          // Only start drag if left click on titlebar itself, not on nested buttons
+          if (e.button === 0 && !(e.target as HTMLElement).closest('button, input, select, textarea, [data-no-drag]')) {
+            onStartDrag?.(e);
+          }
+        }}
+        className="relative z-10 flex items-center justify-between px-4 py-3 border-b border-neutral-800/90 cursor-grab active:cursor-grabbing bg-neutral-950/90"
+      >
         <div className="flex items-center gap-2.5">
           <div className="relative flex items-center justify-center">
             <span
@@ -299,7 +332,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                   )}
                 </div>
 
-                <div className="text-[13.5px] leading-relaxed text-white/95 min-h-[46px] flex items-center font-normal">
+                <div className={`${transcriptFontClass} leading-relaxed text-white/95 min-h-[46px] flex items-center font-normal`}>
                   {currentTranscript ? (
                     <span className="italic font-medium">"{currentTranscript}"</span>
                   ) : isListening ? (
@@ -398,7 +431,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                   </div>
                 </div>
 
-                <div className="text-[13.5px] leading-relaxed text-white/95 min-h-[90px] font-normal whitespace-pre-line">
+                <div className={`${answerFontClass} leading-relaxed text-white/95 min-h-[90px] font-normal whitespace-pre-line`}>
                   {suggestedAnswer ? (
                     suggestedAnswer
                   ) : (
@@ -599,9 +632,66 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                 />
               </div>
 
+              {/* Font Size & Readability Selection */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11.5px] font-bold tracking-wider text-emerald-300 flex items-center gap-1.5">
+                    <Type className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>FONT SIZE & READABILITY</span>
+                  </label>
+                  <span className="text-[10px] text-neutral-400 font-medium">
+                    {settings.fontSize === 'small'
+                      ? 'Slightly Smaller'
+                      : settings.fontSize === 'large'
+                      ? 'Slightly Bigger'
+                      : 'Normal'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ fontSize: 'small' })}
+                    className={`py-2 px-2 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 ${
+                      settings.fontSize === 'small'
+                        ? 'bg-emerald-500/20 border-emerald-400/80 text-white font-bold shadow-[0_0_12px_rgba(16,185,129,0.2)]'
+                        : 'bg-white/5 border-white/10 text-neutral-400 hover:text-white hover:bg-white/10'
+                    }`}
+                  >
+                    <span className="text-xs font-semibold leading-none">Aa</span>
+                    <span className="text-[10px] font-medium leading-tight">Slightly Smaller</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ fontSize: 'normal' })}
+                    className={`py-2 px-2 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 ${
+                      (settings.fontSize || 'normal') === 'normal'
+                        ? 'bg-emerald-500/20 border-emerald-400/80 text-white font-bold shadow-[0_0_12px_rgba(16,185,129,0.2)]'
+                        : 'bg-white/5 border-white/10 text-neutral-400 hover:text-white hover:bg-white/10'
+                    }`}
+                  >
+                    <span className="text-sm font-semibold leading-none">Aa</span>
+                    <span className="text-[10px] font-medium leading-tight">Normal</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ fontSize: 'large' })}
+                    className={`py-2 px-2 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 ${
+                      settings.fontSize === 'large'
+                        ? 'bg-emerald-500/20 border-emerald-400/80 text-white font-bold shadow-[0_0_12px_rgba(16,185,129,0.2)]'
+                        : 'bg-white/5 border-white/10 text-neutral-400 hover:text-white hover:bg-white/10'
+                    }`}
+                  >
+                    <span className="text-base font-bold leading-none">Aa</span>
+                    <span className="text-[10px] font-medium leading-tight">Slightly Bigger</span>
+                  </button>
+                </div>
+              </div>
+
               {/* Sentence Length Selection */}
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold tracking-wider text-emerald-300">
+                <label className="text-[11.5px] font-bold tracking-wider text-emerald-300">
                   RESPONSE SENTENCE LENGTH
                 </label>
                 <div className="flex gap-1.5">
@@ -681,14 +771,22 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
       {/* ================= BOTTOM RESIZE HANDLE ================= */}
       {!isMinimized && (
         <div
+          data-no-drag="true"
           onMouseDown={(e) => {
             e.preventDefault();
+            e.stopPropagation();
+            if (panelRef.current) {
+              initialTopRef.current = panelRef.current.getBoundingClientRect().top;
+            }
             setIsResizing(true);
           }}
-          className="relative z-20 h-4 w-full flex items-center justify-center cursor-ns-resize hover:bg-white/10 transition-colors"
-          title="Drag to resize height"
+          onPointerDown={(e) => {
+            e.stopPropagation();
+          }}
+          className="relative z-30 h-5 w-full flex items-center justify-center cursor-ns-resize hover:bg-white/10 active:bg-white/15 transition-colors border-t border-neutral-800/40"
+          title="Drag down to extend height (Original: 580px - Max: 870px)"
         >
-          <div className="w-8 h-1 rounded-full bg-white/30" />
+          <div className="w-10 h-1.5 rounded-full bg-neutral-600 hover:bg-emerald-400/80 active:bg-emerald-400 transition-colors" />
         </div>
       )}
     </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { motion } from 'motion/react';
+import { motion, useDragControls } from 'motion/react';
 import { FloatingPanel } from './components/FloatingPanel';
 import { ScreenChallengeModal } from './components/ScreenChallengeModal';
 import { StealthAndExeModal } from './components/StealthAndExeModal';
@@ -9,6 +9,7 @@ import { CopilotSpeechManager } from './utils/speech';
 const DEFAULT_SETTINGS: UserSettings = {
   persona: 'coding',
   modelChoice: 'gemini-3.7-flash',
+  fontSize: 'normal',
   resumeRawText: '',
   candidateSummary: 'Senior Software Engineer with 6+ years building distributed cloud systems, high-throughput microservices, React/TypeScript frontends, and scalable databases.',
   interviewContext: 'Senior Software Engineering Role, distributed architecture, API design, performance optimization, and system resilience.',
@@ -21,6 +22,7 @@ const DEFAULT_SETTINGS: UserSettings = {
 };
 
 export default function App() {
+  const dragControls = useDragControls();
   const [settings, setSettings] = useState<UserSettings>(() => {
     try {
       const saved = localStorage.getItem('overdesk_copilot_settings');
@@ -171,18 +173,22 @@ export default function App() {
   };
 
   return (
-    <div className="relative min-h-screen w-full flex items-center justify-center p-4 sm:p-8 bg-transparent">
+    <div className="fixed inset-0 w-full h-full pointer-events-none flex items-start justify-center pt-6 sm:pt-10 bg-transparent overflow-hidden">
       {/* Floating Movable Glassmorphic Overlay Panel */}
       <motion.div
         drag
+        dragListener={false}
+        dragControls={dragControls}
         dragMomentum={false}
         initial={{ scale: 0.98, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ duration: 0.2 }}
-        className="relative z-30 max-w-[390px] w-full"
+        className="pointer-events-auto relative z-30 max-w-[410px] w-full"
+        style={{ originY: 0 }}
       >
         <FloatingPanel
           settings={settings}
+          onStartDrag={(e) => dragControls.start(e)}
           onUpdateSettings={handleUpdateSettings}
           isListening={isListening}
           onToggleInterview={handleToggleInterview}

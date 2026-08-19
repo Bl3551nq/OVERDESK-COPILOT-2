@@ -4,9 +4,12 @@ export type SentenceLength = 'short' | 'medium' | 'detailed';
 
 export type AIModelChoice = 'gemini-3.7-flash' | 'gemini-2.5-pro';
 
+export type AppFontSize = 'small' | 'normal' | 'large';
+
 export interface UserSettings {
   persona: PersonaType;
   modelChoice?: AIModelChoice;
+  fontSize?: AppFontSize;
   resumeFileName?: string;
   resumeRawText: string;
   candidateSummary: string;

@@ -42,7 +42,7 @@ app.whenReady().then(createWindow);`;
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 pointer-events-auto flex items-center justify-center p-4 bg-black/70 backdrop-blur-md">
       <div className="relative w-full max-w-xl bg-neutral-900/95 border border-white/20 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh]">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-white/5">
