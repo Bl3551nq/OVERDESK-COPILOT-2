@@ -1,0 +1,43 @@
+name: Build Overdesk Copilot Windows .EXE
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch: # Allows manual trigger from GitHub Actions tab
+
+jobs:
+  build-windows-exe:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: |
+          npm install
+          npm install -D electron electron-builder
+
+      - name: Build Web Assets & Server
+        run: npm run build
+
+      - name: Package Windows .EXE with Electron Builder
+        run: npx electron-builder --win nsis portable --x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Windows .EXE Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: overdesk-copilot-windows-exe
+          path: |
+            dist_electron/*.exe
+          retention-days: 14
