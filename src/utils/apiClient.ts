@@ -1,8 +1,5 @@
 import { PersonaType, SentenceLength, AIModelChoice } from '../types';
 
-// Default Hosted Backend Endpoint (used as fallback when running locally inside Electron without local server)
-const HOSTED_BACKEND_ORIGIN = 'https://ais-dev-4lemfiuufuegchaty5ng22-930700759373.europe-west2.run.app';
-
 export function getApiBaseUrl(): string {
   // 1. If custom backend URL is saved in localStorage, use that
   const customUrl = localStorage.getItem('overdesk_custom_backend_url');
@@ -15,8 +12,8 @@ export function getApiBaseUrl(): string {
     return window.location.origin;
   }
 
-  // 3. Running from Electron file:// protocol or packaged app
-  return HOSTED_BACKEND_ORIGIN;
+  // 3. Fallback origin
+  return '';
 }
 
 export interface CopilotAnswerRequest {
@@ -45,7 +42,7 @@ export interface ParseResumeRequest {
 }
 
 /**
- * Universal safe API caller: tries local/relative route, falls back to Cloud backend automatically
+ * Universal safe API caller: handles JSON safely and avoids doctype HTML parse crashes
  */
 export async function apiFetch<T>(endpoint: string, body?: any): Promise<T> {
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
@@ -70,9 +67,8 @@ export async function apiFetch<T>(endpoint: string, body?: any): Promise<T> {
     // continue to fetch
   }
 
-  // First try: Standard relative endpoint if on http(s), or BaseUrl
-  const isFileProto = typeof window !== 'undefined' && window.location.protocol === 'file:';
-  const primaryUrl = isFileProto ? `${HOSTED_BACKEND_ORIGIN}${cleanEndpoint}` : cleanEndpoint;
+  const baseUrl = getApiBaseUrl();
+  const primaryUrl = `${baseUrl}${cleanEndpoint}`;
 
   try {
     const res = await fetch(primaryUrl, {
@@ -81,30 +77,35 @@ export async function apiFetch<T>(endpoint: string, body?: any): Promise<T> {
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
 
+    const contentType = res.headers.get('content-type') || '';
+    const rawText = await res.text();
+
     if (res.ok) {
-      return (await res.json()) as T;
-    }
-    const errData = await res.json().catch(() => ({}));
-    throw new Error(errData.error || `HTTP ${res.status}: ${res.statusText}`);
-  } catch (err: any) {
-    console.warn(`Primary request to ${primaryUrl} failed, trying hosted cloud backend fallback...`, err);
-
-    // Fallback: If primary wasn't already the hosted backend, try the hosted backend
-    if (primaryUrl !== `${HOSTED_BACKEND_ORIGIN}${cleanEndpoint}`) {
-      const fallbackUrl = `${HOSTED_BACKEND_ORIGIN}${cleanEndpoint}`;
-      const fallbackRes = await fetch(fallbackUrl, {
-        method,
-        headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-      });
-
-      if (fallbackRes.ok) {
-        return (await fallbackRes.json()) as T;
+      if (contentType.includes('application/json') || (rawText.startsWith('{') || rawText.startsWith('['))) {
+        try {
+          return JSON.parse(rawText) as T;
+        } catch (e) {
+          console.warn('JSON parse error from server:', rawText.slice(0, 100));
+        }
       }
-      const errFallback = await fallbackRes.json().catch(() => ({}));
-      throw new Error(errFallback.error || `Server responded with ${fallbackRes.status}`);
+      return { success: true, raw: rawText } as unknown as T;
     }
 
+    // Try to extract JSON error message
+    let errorMessage = `Server error (HTTP ${res.status})`;
+    if (rawText.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(rawText);
+        if (parsed.error) errorMessage = parsed.error;
+      } catch (e) {}
+    } else if (rawText.includes('<!DOCTYPE') || rawText.includes('<html')) {
+      errorMessage = `Server temporarily busy or restarting. Please try again.`;
+    }
+
+    throw new Error(errorMessage);
+  } catch (err: any) {
+    console.warn(`Request to ${primaryUrl} failed:`, err?.message || err);
     throw new Error(err.message || 'Failed to connect to AI server. Please check internet connection.');
   }
 }
+

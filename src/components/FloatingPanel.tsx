@@ -414,9 +414,36 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                     <span>{currentPersonaInfo.icon}</span>
                     {currentPersonaInfo.title}
                   </span>
-                  <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-white/5 border border-white/15 text-neutral-300">
-                    English
-                  </span>
+
+                  {/* Audio Source Quick Toggle */}
+                  <button
+                    onClick={() => {
+                      const nextSource =
+                        settings.audioInputSource === 'mic'
+                          ? 'system'
+                          : settings.audioInputSource === 'system'
+                          ? 'mixed'
+                          : 'mic';
+                      onUpdateSettings({ audioInputSource: nextSource });
+                    }}
+                    title="Toggle Audio Source (Microphone vs Earpiece/Meeting Tab Audio)"
+                    className={`px-2.5 py-1 rounded-full text-xs font-medium border flex items-center gap-1 transition-all cursor-pointer ${
+                      settings.audioInputSource === 'system'
+                        ? 'bg-sky-500/20 border-sky-400/50 text-sky-200 shadow-sm'
+                        : settings.audioInputSource === 'mixed'
+                        ? 'bg-purple-500/20 border-purple-400/50 text-purple-200'
+                        : 'bg-white/5 border-white/15 text-neutral-300 hover:text-white'
+                    }`}
+                  >
+                    <span>
+                      {settings.audioInputSource === 'system'
+                        ? '🎧 Earpiece/Tab'
+                        : settings.audioInputSource === 'mixed'
+                        ? '🎛️ Dual'
+                        : '🎙️ Mic'}
+                    </span>
+                  </button>
+
                   {isListening && (
                     <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-medium bg-rose-500/20 border border-rose-500/30 text-rose-300">
                       {formatTimer(sessionDurationSec)}
@@ -453,7 +480,13 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                     ) : (
                       <MicOff className="w-3 h-3 text-neutral-400" />
                     )}
-                    <span>{isListening ? 'LISTENING TO INTERVIEW AUDIO' : 'INTERVIEW AUDIO TRANSCRIPT'}</span>
+                    <span>
+                      {isListening
+                        ? settings.audioInputSource === 'system'
+                          ? 'LISTENING TO TAB / EARPIECE AUDIO'
+                          : 'LISTENING TO INTERVIEW AUDIO'
+                        : 'INTERVIEW AUDIO TRANSCRIPT'}
+                    </span>
                   </div>
 
                   {/* Audio Level Waveform */}
@@ -476,59 +509,83 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                   {currentTranscript ? (
                     <span className="italic font-medium">"{currentTranscript}"</span>
                   ) : isListening ? (
-                    <span className="text-neutral-400 text-xs flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                      Listening to questions from PC / microphone...
-                    </span>
+                    <div className="space-y-1">
+                      <span className="text-emerald-300 text-xs flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                        Listening for interviewer's speech...
+                      </span>
+                      {settings.audioInputSource === 'system' && (
+                        <p className="text-[10px] text-sky-300/90 font-sans">
+                          🎧 Earpiece mode: Audio is captured directly from your meeting tab.
+                        </p>
+                      )}
+                    </div>
                   ) : (
                     <span className="text-neutral-400 text-xs">
-                      Press "Start Interview" to listen, or select a question below.
+                      Press "Start Interview" to listen live, or select a question below.
                     </span>
                   )}
                 </div>
 
-                {/* Quick preset question trigger */}
-                <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-2">
-                  <div className="relative flex-1">
-                    <button
-                      onClick={() => setShowPresetsDropdown(!showPresetsDropdown)}
-                      className="w-full text-left px-2.5 py-1 rounded-lg bg-black/20 hover:bg-black/30 border border-white/10 text-[11px] text-neutral-300 flex items-center justify-between gap-1 transition-colors cursor-pointer"
+                {/* Quick preset question trigger & inline direct ask bar */}
+                <div className="pt-2 border-t border-white/10 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="relative flex-1">
+                      <button
+                        onClick={() => setShowPresetsDropdown(!showPresetsDropdown)}
+                        className="w-full text-left px-2.5 py-1 rounded-lg bg-black/20 hover:bg-black/30 border border-white/10 text-[11px] text-neutral-300 flex items-center justify-between gap-1 transition-colors cursor-pointer"
+                      >
+                        <span className="truncate">Sample Questions ({currentPersonaInfo.title})</span>
+                        <ChevronDown className="w-3 h-3 text-neutral-400 shrink-0" />
+                      </button>
+
+                      {showPresetsDropdown && (
+                        <div className="absolute left-0 right-0 bottom-full mb-1.5 z-30 bg-neutral-900/95 border border-white/20 rounded-xl shadow-2xl p-1.5 space-y-1 max-h-48 overflow-y-auto backdrop-blur-md">
+                          {SAMPLE_QUESTIONS.map((q) => (
+                            <button
+                              key={q.id}
+                              onClick={() => {
+                                onSelectPresetQuestion(q.question);
+                                setShowPresetsDropdown(false);
+                              }}
+                              className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-[11.5px] text-neutral-200 hover:text-white transition-colors cursor-pointer"
+                            >
+                              <span className="font-semibold text-emerald-400 block text-[10px]">
+                                {q.category}
+                              </span>
+                              <span className="line-clamp-2">{q.question}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (customQuestionInput.trim()) {
+                          onSelectPresetQuestion(customQuestionInput.trim());
+                          setCustomQuestionInput('');
+                        }
+                      }}
+                      className="flex-1 flex items-center gap-1"
                     >
-                      <span className="truncate">Sample Questions ({currentPersonaInfo.title})</span>
-                      <ChevronDown className="w-3 h-3 text-neutral-400 shrink-0" />
-                    </button>
-
-                    {showPresetsDropdown && (
-                      <div className="absolute left-0 right-0 top-full mt-1.5 z-30 bg-neutral-900/95 border border-white/20 rounded-xl shadow-2xl p-1.5 space-y-1 max-h-48 overflow-y-auto">
-                        {SAMPLE_QUESTIONS.map((q) => (
-                          <button
-                            key={q.id}
-                            onClick={() => {
-                              onSelectPresetQuestion(q.question);
-                              setShowPresetsDropdown(false);
-                            }}
-                            className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-[11.5px] text-neutral-200 hover:text-white transition-colors"
-                          >
-                            <span className="font-semibold text-emerald-400 block text-[10px]">
-                              {q.category}
-                            </span>
-                            <span className="line-clamp-2">{q.question}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                      <input
+                        type="text"
+                        value={customQuestionInput}
+                        onChange={(e) => setCustomQuestionInput(e.target.value)}
+                        placeholder="Type question or paste..."
+                        className="w-full px-2 py-1 rounded-lg bg-black/30 border border-white/15 text-[11px] text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-400"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!customQuestionInput.trim()}
+                        className="px-2 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 text-neutral-950 font-bold text-[11px] transition-colors cursor-pointer shrink-0"
+                      >
+                        Ask
+                      </button>
+                    </form>
                   </div>
-
-                  {/* Manual trigger test prompt */}
-                  <button
-                    onClick={() => {
-                      const input = window.prompt('Enter interview question to test answers:');
-                      if (input) onSelectPresetQuestion(input);
-                    }}
-                    className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-neutral-300 text-[11px] font-medium transition-colors"
-                  >
-                    Type
-                  </button>
                 </div>
               </div>
 
@@ -869,6 +926,79 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                       {len}
                     </button>
                   ))}
+                </div>
+              </div>
+
+              {/* Audio Input Source (Earpiece & Microphone Selection) */}
+              <div className="space-y-2 pt-2 border-t border-white/15">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11.5px] font-bold tracking-wider text-emerald-300">
+                    AUDIO SOURCE (EARPIECE & HEADPHONE SUPPORT)
+                  </label>
+                  <span className="text-[10px] text-sky-400 font-medium">
+                    {settings.audioInputSource === 'system'
+                      ? '🎧 Earpiece Mode'
+                      : settings.audioInputSource === 'mixed'
+                      ? '🎛️ Dual Audio'
+                      : '🎙️ Microphone'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ audioInputSource: 'mic' })}
+                    className={`p-2 rounded-xl border text-left flex flex-col gap-1 transition-all cursor-pointer ${
+                      (settings.audioInputSource || 'mic') === 'mic'
+                        ? 'bg-emerald-500/20 border-emerald-400/80 text-white font-semibold'
+                        : 'bg-white/5 border-white/10 text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    <span className="text-xs font-bold flex items-center gap-1">
+                      🎙️ Mic Only
+                    </span>
+                    <span className="text-[9.5px] leading-tight opacity-80">
+                      Standard room & speaker sound
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ audioInputSource: 'system' })}
+                    className={`p-2 rounded-xl border text-left flex flex-col gap-1 transition-all cursor-pointer ${
+                      settings.audioInputSource === 'system'
+                        ? 'bg-sky-500/20 border-sky-400/80 text-white font-semibold shadow-[0_0_12px_rgba(56,189,248,0.2)]'
+                        : 'bg-white/5 border-white/10 text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    <span className="text-xs font-bold flex items-center gap-1 text-sky-300">
+                      🎧 Tab / Earpiece
+                    </span>
+                    <span className="text-[9.5px] leading-tight opacity-80">
+                      Meet / Zoom tab directly (No mic spill)
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ audioInputSource: 'mixed' })}
+                    className={`p-2 rounded-xl border text-left flex flex-col gap-1 transition-all cursor-pointer ${
+                      settings.audioInputSource === 'mixed'
+                        ? 'bg-purple-500/20 border-purple-400/80 text-white font-semibold'
+                        : 'bg-white/5 border-white/10 text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    <span className="text-xs font-bold flex items-center gap-1 text-purple-300">
+                      🎛️ Dual Mixed
+                    </span>
+                    <span className="text-[9.5px] leading-tight opacity-80">
+                      Both Mic & Meeting Tab combined
+                    </span>
+                  </button>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-sky-950/40 border border-sky-500/20 text-[10.5px] text-sky-200/90 leading-relaxed">
+                  <strong className="text-sky-300">💡 How Earpiece Mode works:</strong> When you click <em>Start Interview</em>, select your Google Meet/Zoom tab and ensure <strong>"Share tab audio"</strong> is checked. The copilot captures the interviewer's voice directly from the browser tab with crystal clarity even when you're wearing in-ear headphones.
                 </div>
               </div>
 

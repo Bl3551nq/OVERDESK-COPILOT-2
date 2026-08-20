@@ -37,16 +37,18 @@ export default function App() {
   const [isListening, setIsListening] = useState(false);
   const [currentTranscript, setCurrentTranscript] = useState(() => {
     try {
-      return localStorage.getItem('overdesk_copilot_transcript') || '"So walk me through how you\'d approach scaling this system..."';
+      const saved = localStorage.getItem('overdesk_copilot_transcript');
+      return saved || '';
     } catch {
-      return '"So walk me through how you\'d approach scaling this system..."';
+      return '';
     }
   });
   const [suggestedAnswer, setSuggestedAnswer] = useState(() => {
     try {
-      return localStorage.getItem('overdesk_copilot_suggested_answer') || "I'd start by isolating the primary bottleneck—determining whether the workload is read-heavy or write-heavy—then implement an aggressive caching layer with Redis or partition databases horizontally using consistent hashing to maintain sub-50ms P99 latency.";
+      const saved = localStorage.getItem('overdesk_copilot_suggested_answer');
+      return saved || '';
     } catch {
-      return "I'd start by isolating the primary bottleneck—determining whether the workload is read-heavy or write-heavy—then implement an aggressive caching layer with Redis or partition databases horizontally using consistent hashing to maintain sub-50ms P99 latency.";
+      return '';
     }
   });
   const [isGenerating, setIsGenerating] = useState(false);
@@ -164,15 +166,18 @@ export default function App() {
       setIsListening(false);
       setAudioLevel(0);
     } else {
-      // Start session
+      // Start session - clear placeholder sample so user gets fresh active listening
+      setCurrentTranscript('');
+      setSuggestedAnswer('');
+      setIsListening(true);
+      setSessionDurationSec(0);
+
       if (!speechManagerRef.current) {
         speechManagerRef.current = new CopilotSpeechManager();
       }
 
-      setIsListening(true);
-      setSessionDurationSec(0);
-
       await speechManagerRef.current.startListening({
+        audioSource: settings.audioInputSource || 'mic',
         onInterimText: (text) => {
           setCurrentTranscript(text);
           if (silenceTimerRef.current) {

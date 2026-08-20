@@ -1,42 +1,73 @@
 // Speech Recognition & Audio Capture Utilities for Overdesk Copilot
+// Supports Microphone, Browser Meeting Tab Audio (for Earpiece users), and Mixed Audio
 
 export interface SpeechListenerOptions {
   onInterimText: (text: string) => void;
   onFinalText: (text: string) => void;
   onError: (error: string) => void;
   onAudioLevel?: (level: number) => void;
+  onStatusChange?: (status: 'listening' | 'interviewer_speaking' | 'stopped' | 'tab_connected') => void;
+  audioSource?: 'mic' | 'system' | 'mixed';
 }
 
 export class CopilotSpeechManager {
   private recognition: any = null;
   private isListening = false;
   private audioContext: AudioContext | null = null;
-  private mediaStream: MediaStream | null = null;
+  private micStream: MediaStream | null = null;
+  private tabStream: MediaStream | null = null;
   private analyser: AnalyserNode | null = null;
   private animFrameId: number | null = null;
+  private currentAudioSource: 'mic' | 'system' | 'mixed' = 'mic';
 
   constructor() {
-    // Check for web speech API
+    this.initRecognition();
+  }
+
+  private initRecognition() {
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (SpeechRecognition) {
-      this.recognition = new SpeechRecognition();
-      this.recognition.continuous = true;
-      this.recognition.interimResults = true;
-      this.recognition.lang = 'en-US';
+      try {
+        this.recognition = new SpeechRecognition();
+        this.recognition.continuous = true;
+        this.recognition.interimResults = true;
+        this.recognition.maxAlternatives = 1;
+        this.recognition.lang = 'en-US';
+      } catch (e) {
+        console.warn('SpeechRecognition initialization note:', e);
+      }
     }
   }
 
   public isSupported(): boolean {
-    return !!this.recognition;
+    return !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+  }
+
+  public getAudioSource(): 'mic' | 'system' | 'mixed' {
+    return this.currentAudioSource;
   }
 
   public async startListening(options: SpeechListenerOptions): Promise<boolean> {
-    if (this.isListening) return true;
+    if (this.isListening) {
+      this.stopListening();
+    }
+
+    this.currentAudioSource = options.audioSource || 'mic';
 
     try {
-      // 1. Start Web Speech recognition if available
+      if (!this.recognition) {
+        this.initRecognition();
+      }
+
+      // 1. Setup Speech Recognition
       if (this.recognition) {
+        this.recognition.onstart = () => {
+          if (options.onStatusChange) {
+            options.onStatusChange('listening');
+          }
+        };
+
         this.recognition.onresult = (event: any) => {
           let interimTranscript = '';
           let finalTranscript = '';
@@ -51,6 +82,9 @@ export class CopilotSpeechManager {
           }
 
           if (interimTranscript) {
+            if (options.onStatusChange) {
+              options.onStatusChange('interviewer_speaking');
+            }
             options.onInterimText(interimTranscript.trim());
           }
           if (finalTranscript) {
@@ -59,15 +93,17 @@ export class CopilotSpeechManager {
         };
 
         this.recognition.onerror = (event: any) => {
-          console.warn('Speech recognition event:', event.error);
-          if (event.error !== 'no-speech') {
-            options.onError(event.error);
+          console.warn('Speech recognition warning/event:', event.error);
+          if (event.error === 'not-allowed') {
+            options.onError('Microphone/audio permission denied. Please allow microphone access in your browser address bar.');
+          } else if (event.error !== 'no-speech') {
+            options.onError(`Audio notice: ${event.error}`);
           }
         };
 
         this.recognition.onend = () => {
-          // Restart if still marked as listening
-          if (this.isListening) {
+          // Keep continuous recognition alive while active
+          if (this.isListening && this.recognition) {
             try {
               this.recognition.start();
             } catch (e) {
@@ -76,47 +112,91 @@ export class CopilotSpeechManager {
           }
         };
 
-        this.recognition.start();
+        try {
+          this.recognition.start();
+        } catch (e) {
+          console.warn('Speech recognition start note:', e);
+        }
       }
 
-      // 2. Setup Audio Visualizer / Level meter
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        this.mediaStream = stream;
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-        if (AudioCtx) {
-          this.audioContext = new AudioCtx();
-          const source = this.audioContext.createMediaStreamSource(stream);
-          this.analyser = this.audioContext.createAnalyser();
-          this.analyser.fftSize = 64;
-          source.connect(this.analyser);
+      // 2. Setup Audio Visualizer & Earpiece / Tab Audio Capture
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) {
+        this.audioContext = new AudioCtx();
+        this.analyser = this.audioContext.createAnalyser();
+        this.analyser.fftSize = 64;
 
-          const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
-          const updateAudioLevel = () => {
-            if (!this.isListening || !this.analyser) return;
-            this.analyser.getByteFrequencyData(dataArray);
-            let sum = 0;
-            for (let i = 0; i < dataArray.length; i++) {
-              sum += dataArray[i];
+        // If user chose system/tab audio (e.g. wearing earpiece for Google Meet/Zoom)
+        if (this.currentAudioSource === 'system' || this.currentAudioSource === 'mixed') {
+          try {
+            if (navigator.mediaDevices?.getDisplayMedia) {
+              // Capture browser tab audio (Google Meet, Teams, Zoom Web)
+              this.tabStream = await navigator.mediaDevices.getDisplayMedia({
+                video: { width: 1, height: 1, frameRate: 1 } as any,
+                audio: {
+                  echoCancellation: false,
+                  noiseSuppression: false,
+                  autoGainControl: false,
+                } as any,
+              });
+
+              if (this.tabStream && this.tabStream.getAudioTracks().length > 0) {
+                const tabSource = this.audioContext.createMediaStreamSource(this.tabStream);
+                tabSource.connect(this.analyser);
+                if (options.onStatusChange) {
+                  options.onStatusChange('tab_connected');
+                }
+              }
             }
-            const average = sum / dataArray.length;
-            const normalized = Math.min(1, average / 128);
-            if (options.onAudioLevel) {
-              options.onAudioLevel(normalized);
-            }
-            this.animFrameId = requestAnimationFrame(updateAudioLevel);
-          };
-          updateAudioLevel();
+          } catch (tabErr: any) {
+            console.warn('Meeting Tab audio selection note:', tabErr);
+            // Fallback to mic if tab share was cancelled
+          }
         }
-      } catch (err) {
-        console.warn('Microphone audio level capture warning:', err);
+
+        // Also capture mic stream (unless pure system audio and tab stream is already active)
+        if (this.currentAudioSource === 'mic' || this.currentAudioSource === 'mixed' || !this.tabStream) {
+          try {
+            this.micStream = await navigator.mediaDevices.getUserMedia({
+              audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+              },
+            });
+            if (this.micStream) {
+              const micSource = this.audioContext.createMediaStreamSource(this.micStream);
+              micSource.connect(this.analyser);
+            }
+          } catch (micErr) {
+            console.warn('Microphone stream capture notice:', micErr);
+          }
+        }
+
+        // Audio VU Level loop
+        const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+        const updateAudioLevel = () => {
+          if (!this.isListening || !this.analyser) return;
+          this.analyser.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i];
+          }
+          const average = sum / dataArray.length;
+          const normalized = Math.min(1, average / 90);
+          if (options.onAudioLevel) {
+            options.onAudioLevel(normalized);
+          }
+          this.animFrameId = requestAnimationFrame(updateAudioLevel);
+        };
+        updateAudioLevel();
       }
 
       this.isListening = true;
       return true;
     } catch (err: any) {
       console.error('Failed to start speech listener:', err);
-      options.onError(err.message || 'Microphone access denied');
+      options.onError(err.message || 'Audio access error');
       return false;
     }
   }
@@ -125,6 +205,7 @@ export class CopilotSpeechManager {
     this.isListening = false;
     if (this.recognition) {
       try {
+        this.recognition.onend = null;
         this.recognition.stop();
       } catch (e) {
         // ignore
@@ -134,9 +215,13 @@ export class CopilotSpeechManager {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
     }
-    if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach((track) => track.stop());
-      this.mediaStream = null;
+    if (this.micStream) {
+      this.micStream.getTracks().forEach((track) => track.stop());
+      this.micStream = null;
+    }
+    if (this.tabStream) {
+      this.tabStream.getTracks().forEach((track) => track.stop());
+      this.tabStream = null;
     }
     if (this.audioContext) {
       this.audioContext.close().catch(() => {});
@@ -145,7 +230,7 @@ export class CopilotSpeechManager {
   }
 }
 
-// Simple Text to Speech whisper (optional candidate earpiece readout)
+// Text to Speech whisper (optional candidate earpiece readout)
 export function speakAnswerWhisper(text: string) {
   if (!('speechSynthesis' in window)) return;
   window.speechSynthesis.cancel();
@@ -161,3 +246,4 @@ export function stopSpeaking() {
     window.speechSynthesis.cancel();
   }
 }
+
