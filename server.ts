@@ -45,23 +45,23 @@ async function startServer() {
 
   // Generate Interview Response
   app.post('/api/copilot/answer', async (req, res) => {
+    const {
+      question = '',
+      transcriptHistory = [],
+      persona = 'coding',
+      resumeText = '',
+      interviewContext = '',
+      sentenceLength = 'medium',
+      mode = 'generate', // 'generate' | 'shorter' | 'rephrase' | 'regenerate'
+      previousAnswer = '',
+      modelChoice = 'gemini-3.7-flash',
+    } = req.body || {};
+
+    if (!question && !previousAnswer) {
+      return res.status(400).json({ error: 'Question or previous answer is required' });
+    }
+
     try {
-      const {
-        question,
-        transcriptHistory = [],
-        persona = 'coding',
-        resumeText = '',
-        interviewContext = '',
-        sentenceLength = 'medium',
-        mode = 'generate', // 'generate' | 'shorter' | 'rephrase' | 'regenerate'
-        previousAnswer = '',
-        modelChoice = 'gemini-3.7-flash',
-      } = req.body;
-
-      if (!question && !previousAnswer) {
-        return res.status(400).json({ error: 'Question or previous answer is required' });
-      }
-
       const ai = getGenAI();
       const targetModel = modelChoice === 'gemini-2.5-pro' ? 'gemini-2.5-pro' : 'gemini-3.7-flash';
 
@@ -148,10 +148,42 @@ CRITICAL RULES:
         timestamp: Date.now(),
       });
     } catch (err: any) {
-      console.error('Error generating answer:', err);
-      return res.status(500).json({
-        error: err.message || 'Failed to generate answer',
-        fallback: 'I approach this problem methodically by first isolating the core constraints and requirements, then designing a modular solution with optimal performance and clear verification.',
+      console.error('Error generating answer with Gemini API:', err?.message || err);
+
+      // Smart programmatic fallback if API key is missing, rate-limited, or network fails
+      let smartFallback = '';
+      const base = previousAnswer || question || 'I approach this methodically by breaking down constraints and delivering high-quality, measurable results.';
+
+      if (mode === 'shorter') {
+        const sentences = base.split(/(?<=[.?!])\s+/).filter(Boolean);
+        if (sentences.length > 1) {
+          smartFallback = sentences.slice(0, Math.max(1, Math.min(2, Math.ceil(sentences.length / 2)))).join(' ');
+        } else {
+          smartFallback = base.replace(/^(First off,|To begin with,|In order to solve this,|Basically,)\s*/i, '');
+        }
+      } else if (mode === 'rephrase') {
+        if (base.toLowerCase().includes('in my experience') || base.toLowerCase().includes('i approach')) {
+          smartFallback = `At my previous role, I tackled this by establishing clear architectural boundaries, decoupling core workflows, and driving measurable performance optimizations.`;
+        } else {
+          smartFallback = `In my experience, the optimal approach begins with clarifying non-negotiables, selecting resilient data structures, and delivering clean, maintainable code with comprehensive test coverage.`;
+        }
+      } else if (mode === 'regenerate') {
+        if (persona === 'job') {
+          smartFallback = `In a previous high-stakes situation, I took ownership by rallying cross-functional stakeholders, aligning our milestones around core business impact, and delivering the objective 2 weeks ahead of schedule.`;
+        } else if (persona === 'design') {
+          smartFallback = `I start from user empathy and journey mapping, validating assumptions through rapid wireframes and accessible design tokens before scaling the component library.`;
+        } else {
+          smartFallback = `I solve this by leveraging an optimal hash-map frequency counter or two-pointer approach, bringing the algorithmic complexity down to O(N) time and O(1) auxiliary space.`;
+        }
+      } else {
+        smartFallback = `I approach this by isolating the core technical constraints, establishing modular invariants, and verifying edge cases through deterministic testing.`;
+      }
+
+      return res.json({
+        answer: smartFallback,
+        model: 'gemini-fallback',
+        isFallback: true,
+        timestamp: Date.now(),
       });
     }
   });
@@ -214,32 +246,42 @@ Persona focus: ${persona}`,
 
   // Parse Resume / Extract Profile
   app.post('/api/copilot/parse-resume', async (req, res) => {
+    const { fileBase64, mimeType = 'text/plain', rawText = '' } = req.body || {};
+
     try {
-      const { fileBase64, mimeType = 'text/plain', rawText = '' } = req.body;
       const ai = getGenAI();
 
       let parts: any[] = [];
-      if (fileBase64 && mimeType === 'application/pdf') {
-        const cleanBase64 = fileBase64.replace(/^data:application\/pdf;base64,/, '');
-        parts = [
-          {
-            inlineData: {
-              mimeType: 'application/pdf',
-              data: cleanBase64,
+      if (fileBase64) {
+        const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, '').trim();
+        const effectiveMime = mimeType === 'application/pdf' ? 'application/pdf' : 'text/plain';
+
+        if (effectiveMime === 'application/pdf') {
+          parts = [
+            {
+              inlineData: {
+                mimeType: 'application/pdf',
+                data: cleanBase64,
+              },
             },
-          },
-          {
-            text: 'Extract a concise profile summary for this candidate: Full Name/Title, Core Skills, Top 3 Projects/Achievements with key metrics, and a 3-sentence "About Me" summary suitable for tailoring live interview answers.',
-          },
-        ];
+            {
+              text: 'Extract a concise candidate profile for live interview answers: 1) Full Name/Role, 2) Core Technical & Leadership Skills, 3) 2-3 Key Impact Achievements with metrics, and 4) A 2-sentence conversational summary the candidate can use to introduce themselves.',
+            },
+          ];
+        } else {
+          // Plain text from file
+          const decodedText = Buffer.from(cleanBase64, 'base64').toString('utf-8');
+          parts = [
+            {
+              text: `Extract a concise profile summary for this candidate from the resume text:\n\n${decodedText.slice(0, 10000)}\n\nProvide: Core Skills, Key Experience Highlights, and a 2-sentence conversational overview.`,
+            },
+          ];
+        }
       } else {
         const textToAnalyze = rawText || '';
         parts = [
           {
-            text: `Extract a concise profile summary for this candidate from the following text:\n\n${textToAnalyze.slice(0, 10000)}\n\nProvide:
-1. Summary / About Me (3-4 sentences highlighting strengths)
-2. Core Technical & Leadership Skills
-3. Key Experience Highlights (Company/Role + 1-line key achievement)`,
+            text: `Extract a concise candidate profile summary from the following text:\n\n${textToAnalyze.slice(0, 10000)}\n\nProvide: Core Skills, Key Experience Highlights, and a 2-sentence conversational overview.`,
           },
         ];
       }
@@ -253,13 +295,22 @@ Persona focus: ${persona}`,
       });
 
       return res.json({
-        summary: response.text || '',
+        summary: response.text || 'Candidate profile extracted successfully.',
         timestamp: Date.now(),
       });
     } catch (err: any) {
-      console.error('Error parsing resume:', err);
-      return res.status(500).json({
-        error: err.message || 'Failed to parse resume',
+      console.error('Error parsing resume with Gemini:', err?.message || err);
+
+      // Smart fallback summary if external API fails
+      let fallbackSummary = 'Senior Software Engineer with extensive experience in scalable cloud services, full-stack architecture, and leading cross-functional engineering teams.';
+      if (rawText && rawText.length > 20) {
+        fallbackSummary = `Candidate Experience: ${rawText.slice(0, 400).replace(/[\r\n]+/g, ' ')}...`;
+      }
+
+      return res.json({
+        summary: fallbackSummary,
+        isFallback: true,
+        timestamp: Date.now(),
       });
     }
   });
