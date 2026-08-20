@@ -25,6 +25,7 @@ import {
   Maximize2,
   Minimize2,
   Type,
+  X,
 } from 'lucide-react';
 import { UserSettings, PersonaType, SentenceLength, TranscriptItem, AppFontSize } from '../types';
 import { PERSONAS, PersonaInfo, SAMPLE_QUESTIONS } from '../utils/presets';
@@ -121,6 +122,19 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
       // ignore in browser
     }
   }, [panelHeight, isMinimized]);
+
+  const handleClose = () => {
+    try {
+      const electron = (window as any).require?.('electron');
+      if (electron?.ipcRenderer) {
+        electron.ipcRenderer.send('close-window');
+        return;
+      }
+    } catch {
+      // ignore
+    }
+    setIsMinimized(true);
+  };
 
   const handleCopyAnswer = () => {
     if (!suggestedAnswer) return;
@@ -270,6 +284,14 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
             title={isMinimized ? 'Expand' : 'Minimize'}
           >
             {isMinimized ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
+          </button>
+
+          <button
+            onClick={handleClose}
+            className="app-no-drag w-6 h-6 rounded-lg bg-neutral-900 hover:bg-rose-950/80 hover:border-rose-600/60 border border-neutral-700/60 flex items-center justify-center text-neutral-400 hover:text-rose-300 transition-colors cursor-pointer"
+            title="Close / Hide to Tray (Ctrl+Shift+H)"
+          >
+            <X className="w-3 h-3" />
           </button>
         </div>
       </div>

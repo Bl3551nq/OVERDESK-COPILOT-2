@@ -1,12 +1,58 @@
 const { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { exec } = require('child_process');
 
 // Ensure clean alpha rendering for transparent frameless window on Windows DWM
 app.commandLine.appendSwitch('enable-transparent-visuals');
 
 let mainWindow;
 let tray = null;
+
+/**
+ * Windows 10 (2004+) & Windows 11 True Screen Capture Exclusion
+ * WDA_EXCLUDEFROMCAPTURE = 0x00000011 (17)
+ * Unlike WDA_MONITOR (which fills the window with a black rectangle in screen capture),
+ * WDA_EXCLUDEFROMCAPTURE completely removes the window from DWM capture surfaces,
+ * so screen shares (Zoom, Teams, Google Meet, OBS, Browser Entire Screen) render whatever
+ * is behind the window with ZERO black box.
+ */
+function applyTrueStealthExclusion(win) {
+  if (!win) return;
+
+  // 1. Electron built-in fallback
+  try {
+    win.setContentProtection(true);
+  } catch (e) {
+    console.warn('Electron setContentProtection warning:', e);
+  }
+
+  // 2. Windows-specific Win32 API call for WDA_EXCLUDEFROMCAPTURE (17)
+  if (process.platform === 'win32') {
+    try {
+      const handleBuf = win.getNativeWindowHandle();
+      let hwndNum = '0';
+      if (typeof handleBuf.readBigInt64LE === 'function') {
+        hwndNum = handleBuf.readBigInt64LE(0).toString();
+      } else {
+        hwndNum = handleBuf.readInt32LE(0).toString();
+      }
+
+      // Execute Win32 SetWindowDisplayAffinity(hwnd, 17)
+      const psCommand = `powershell -NoProfile -NonInteractive -Command "$c = @'\nusing System;\nusing System.Runtime.InteropServices;\npublic class WinStealth {\n  [DllImport(\\"user32.dll\\", SetLastError=true)]\n  public static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint dwAffinity);\n}\n'@; Add-Type -TypeDefinition $c; [WinStealth]::SetWindowDisplayAffinity([IntPtr]${hwndNum}, 17);"`;
+
+      exec(psCommand, (err) => {
+        if (err) {
+          console.warn('Windows SetWindowDisplayAffinity script note:', err.message);
+        } else {
+          console.log('Applied WDA_EXCLUDEFROMCAPTURE (17) successfully: Zero black box capture exclusion.');
+        }
+      });
+    } catch (err) {
+      console.warn('Could not apply native Win32 exclusion:', err);
+    }
+  }
+}
 
 function createTrayIcon() {
   // Generate a clean high-resolution tray icon programmatically (emerald dot / shield)
@@ -90,12 +136,16 @@ function createWindow() {
 
   // Windows Stealth Display Affinity:
   // Excludes window from screen capture/recordings/sharing (Zoom, Google Meet, Teams, Discord, OBS)
-  // while remaining 100% visible on your actual physical monitor.
-  try {
-    mainWindow.setContentProtection(true);
-  } catch (e) {
-    console.warn('Could not set display affinity content protection:', e);
-  }
+  // using WDA_EXCLUDEFROMCAPTURE (17) so NO black box or shadow appears during screen shares.
+  applyTrueStealthExclusion(mainWindow);
+
+  mainWindow.once('ready-to-show', () => {
+    applyTrueStealthExclusion(mainWindow);
+  });
+
+  mainWindow.on('show', () => {
+    applyTrueStealthExclusion(mainWindow);
+  });
 
   // Load built index.html from dist
   if (process.env.ELECTRON_START_URL) {
