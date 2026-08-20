@@ -1,14 +1,14 @@
-name: Build Overdesk Copilot Windows .EXE
+name: Build Overdesk Copilot Windows Setup
 
 on:
   push:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
-  workflow_dispatch: # Allows manual trigger from GitHub Actions tab
+  workflow_dispatch:
 
 jobs:
-  build-windows-exe:
+  build-windows-installer:
     runs-on: windows-latest
 
     steps:
@@ -28,15 +28,15 @@ jobs:
       - name: Build Web Assets & Server
         run: npm run build
 
-      - name: Package Windows .EXE with Electron Builder
-        run: npx electron-builder --win nsis portable --x64
+      - name: Package Windows Setup (.exe)
+        run: npx electron-builder --win nsis --x64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload Windows .EXE Artifacts
+      - name: Upload Windows Setup.exe
         uses: actions/upload-artifact@v4
         with:
-          name: overdesk-copilot-windows-exe
+          name: Overdesk-Copilot-Windows-Setup
           path: |
-            dist_electron/*.exe
+            dist_electron/*Setup*.exe
           retention-days: 14

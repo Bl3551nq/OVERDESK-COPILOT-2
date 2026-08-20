@@ -1,68 +1,68 @@
 const { app, BrowserWindow, globalShortcut, ipcMain } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
+const fs = require('fs');
 
 let mainWindow;
-let serverProcess;
-
-function startBackendServer() {
-  const serverScript = path.join(__dirname, '..', 'dist', 'server.cjs');
-  try {
-    serverProcess = spawn('node', [serverScript], {
-      env: { ...process.env, PORT: '3000', NODE_ENV: 'production' },
-      stdio: 'inherit'
-    });
-  } catch (err) {
-    console.error('Failed to spawn backend server:', err);
-  }
-}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 420,
-    height: 640,
+    width: 440,
+    height: 680,
     minWidth: 340,
     minHeight: 380,
-    maxWidth: 600,
-    maxHeight: 900,
+    maxWidth: 800,
+    maxHeight: 1100,
     frame: false,             // Frameless floating window
     transparent: true,       // Pure transparent background overlay
+    backgroundColor: '#00000000',
     alwaysOnTop: true,       // Always floating on top of all windows
     hasShadow: false,
     skipTaskbar: false,
+    show: true,
     webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
+      nodeIntegration: true,
+      contextIsolation: false,
       webSecurity: false
     }
   });
 
   // Windows Stealth Display Affinity:
-  // Under the hood, this invokes Win32 SetWindowDisplayAffinity(hwnd, 0x00000011 /* WDA_EXCLUDEFROMCAPTURE */)
-  // This makes the window 100% INVISIBLE to Zoom, Google Meet, Teams, Discord, & OS Screen Share.
-  mainWindow.setContentProtection(true);
+  // Excludes window from screen capture/recordings/sharing (Zoom, Google Meet, Teams, Discord, OBS)
+  // while remaining 100% visible on your actual physical monitor.
+  try {
+    mainWindow.setContentProtection(true);
+  } catch (e) {
+    console.warn('Could not set display affinity content protection:', e);
+  }
 
-  // Load backend or development URL
-  const targetUrl = process.env.ELECTRON_START_URL || 'http://localhost:3000';
-  
-  const loadWithRetry = (retries = 10) => {
-    mainWindow.loadURL(targetUrl).catch((err) => {
-      if (retries > 0) {
-        setTimeout(() => loadWithRetry(retries - 1), 1000);
-      } else {
-        console.error('Failed to connect to Overdesk backend server.');
-      }
-    });
-  };
+  // Load built index.html from dist
+  if (process.env.ELECTRON_START_URL) {
+    mainWindow.loadURL(process.env.ELECTRON_START_URL);
+  } else {
+    // Look for index.html in relative locations for both dev and packaged app
+    const possiblePaths = [
+      path.join(__dirname, '..', 'dist', 'index.html'),
+      path.join(app.getAppPath(), 'dist', 'index.html'),
+      path.join(__dirname, 'dist', 'index.html')
+    ];
 
-  loadWithRetry();
+    const targetFile = possiblePaths.find(p => fs.existsSync(p));
+
+    if (targetFile) {
+      mainWindow.loadFile(targetFile);
+    } else {
+      mainWindow.loadURL('http://localhost:3000');
+    }
+  }
 
   // Keyboard shortcut: Ctrl + Shift + H to instantly toggle hide/show
   globalShortcut.register('CommandOrControl+Shift+H', () => {
+    if (!mainWindow) return;
     if (mainWindow.isVisible()) {
       mainWindow.hide();
     } else {
       mainWindow.show();
+      mainWindow.focus();
     }
   });
 
@@ -72,9 +72,6 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  if (process.env.NODE_ENV === 'production' || !process.env.ELECTRON_START_URL) {
-    startBackendServer();
-  }
   createWindow();
 
   app.on('activate', () => {
@@ -84,9 +81,6 @@ app.whenReady().then(() => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
-  if (serverProcess) {
-    serverProcess.kill();
-  }
 });
 
 app.on('window-all-closed', () => {
