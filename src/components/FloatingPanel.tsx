@@ -109,6 +109,19 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
     };
   }, [isResizing]);
 
+  // Sync Electron native window size when resized or minimized
+  useEffect(() => {
+    try {
+      const electron = (window as any).require?.('electron');
+      if (electron?.ipcRenderer) {
+        const targetHeight = isMinimized ? 56 : panelHeight + 12;
+        electron.ipcRenderer.send('resize-window', { width: 440, height: targetHeight });
+      }
+    } catch {
+      // ignore in browser
+    }
+  }, [panelHeight, isMinimized]);
+
   const handleCopyAnswer = () => {
     if (!suggestedAnswer) return;
     navigator.clipboard.writeText(suggestedAnswer);
@@ -205,19 +218,19 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
         height: isMinimized ? 'auto' : `${panelHeight}px`,
         opacity: settings.windowOpacity || 1,
       }}
-      className="relative w-full max-w-[410px] rounded-[24px] overflow-hidden flex flex-col backdrop-blur-[36px] bg-neutral-950/95 border border-neutral-800/90 shadow-[0_24px_70px_rgba(0,0,0,0.92),inset_0_1px_1px_rgba(255,255,255,0.08)] text-neutral-100 transition-opacity duration-200 select-none"
+      className="relative w-full rounded-[22px] overflow-hidden flex flex-col backdrop-blur-[36px] bg-neutral-950/95 border border-neutral-800/90 shadow-[0_20px_60px_rgba(0,0,0,0.9),inset_0_1px_1px_rgba(255,255,255,0.08)] text-neutral-100 transition-opacity duration-200 select-none"
     >
-      {/* ================= TITLEBAR (Dark & Stealth & Drag Anchor) ================= */}
+      {/* ================= TITLEBAR (Dark & Stealth & Native OS Drag Anchor) ================= */}
       <div
         onPointerDown={(e) => {
           // Only start drag if left click on titlebar itself, not on nested buttons
-          if (e.button === 0 && !(e.target as HTMLElement).closest('button, input, select, textarea, [data-no-drag]')) {
+          if (e.button === 0 && !(e.target as HTMLElement).closest('button, input, select, textarea, [data-no-drag], .app-no-drag')) {
             onStartDrag?.(e);
           }
         }}
-        className="relative z-10 flex items-center justify-between px-4 py-3 border-b border-neutral-800/90 cursor-grab active:cursor-grabbing bg-neutral-950/90"
+        className="app-drag-header relative z-10 flex items-center justify-between px-3.5 py-2.5 border-b border-neutral-800/90 cursor-grab active:cursor-grabbing bg-neutral-950/95"
       >
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2.5 pointer-events-none">
           <div className="relative flex items-center justify-center">
             <span
               className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
@@ -238,13 +251,13 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
           </span>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 app-no-drag">
           {/* Stealth badge */}
           {settings.hideFromScreenShare && (
             <button
               onClick={onOpenStealthModal}
               title="Stealth active: Hidden from screen share"
-              className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-400/30 text-emerald-300 text-[10px] font-semibold flex items-center gap-1 hover:bg-emerald-500/25 transition-colors"
+              className="app-no-drag px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-400/30 text-emerald-300 text-[10px] font-semibold flex items-center gap-1 hover:bg-emerald-500/25 transition-colors cursor-pointer"
             >
               <Shield className="w-2.5 h-2.5" />
               Stealth Active
@@ -253,7 +266,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
 
           <button
             onClick={() => setIsMinimized(!isMinimized)}
-            className="w-6 h-6 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-700/60 flex items-center justify-center text-neutral-300 hover:text-white transition-colors cursor-pointer"
+            className="app-no-drag w-6 h-6 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-700/60 flex items-center justify-center text-neutral-300 hover:text-white transition-colors cursor-pointer"
             title={isMinimized ? 'Expand' : 'Minimize'}
           >
             {isMinimized ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}

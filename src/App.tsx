@@ -172,42 +172,73 @@ export default function App() {
     fetchAnswer(question, 'generate');
   };
 
+  const isElectron =
+    typeof window !== 'undefined' &&
+    (Boolean((window as any).process?.versions?.electron) ||
+      navigator.userAgent.toLowerCase().includes('electron') ||
+      typeof (window as any).require === 'function');
+
   return (
-    <div className="fixed inset-0 w-full h-full pointer-events-none flex items-start justify-center pt-6 sm:pt-10 bg-transparent overflow-hidden">
+    <div className={`w-full h-full bg-transparent overflow-hidden ${isElectron ? 'p-1.5 flex flex-col justify-start items-stretch' : 'fixed inset-0 pointer-events-none flex items-start justify-center pt-6 sm:pt-10'}`}>
       {/* Floating Movable Glassmorphic Overlay Panel */}
-      <motion.div
-        drag
-        dragListener={false}
-        dragControls={dragControls}
-        dragMomentum={false}
-        initial={{ scale: 0.98, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ duration: 0.2 }}
-        className="pointer-events-auto relative z-30 max-w-[410px] w-full"
-        style={{ originY: 0 }}
-      >
-        <FloatingPanel
-          settings={settings}
-          onStartDrag={(e) => dragControls.start(e)}
-          onUpdateSettings={handleUpdateSettings}
-          isListening={isListening}
-          onToggleInterview={handleToggleInterview}
-          currentTranscript={currentTranscript}
-          suggestedAnswer={suggestedAnswer}
-          isGenerating={isGenerating}
-          audioLevel={audioLevel}
-          onAction={handleAction}
-          onOpenScreenModal={() => setIsScreenModalOpen(true)}
-          onOpenStealthModal={() => setIsStealthModalOpen(true)}
-          sessionDurationSec={sessionDurationSec}
-          onSelectPresetQuestion={handleSelectPresetQuestion}
-          onResetSession={() => {
-            setCurrentTranscript('');
-            setSuggestedAnswer('');
-            setSessionDurationSec(0);
-          }}
-        />
-      </motion.div>
+      {isElectron ? (
+        <div className="w-full h-full relative z-30">
+          <FloatingPanel
+            settings={settings}
+            onUpdateSettings={handleUpdateSettings}
+            isListening={isListening}
+            onToggleInterview={handleToggleInterview}
+            currentTranscript={currentTranscript}
+            suggestedAnswer={suggestedAnswer}
+            isGenerating={isGenerating}
+            audioLevel={audioLevel}
+            onAction={handleAction}
+            onOpenScreenModal={() => setIsScreenModalOpen(true)}
+            onOpenStealthModal={() => setIsStealthModalOpen(true)}
+            sessionDurationSec={sessionDurationSec}
+            onSelectPresetQuestion={handleSelectPresetQuestion}
+            onResetSession={() => {
+              setCurrentTranscript('');
+              setSuggestedAnswer('');
+              setSessionDurationSec(0);
+            }}
+          />
+        </div>
+      ) : (
+        <motion.div
+          drag
+          dragListener={false}
+          dragControls={dragControls}
+          dragMomentum={false}
+          initial={{ scale: 0.98, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ duration: 0.2 }}
+          className="pointer-events-auto relative z-30 max-w-[420px] w-full"
+          style={{ originY: 0 }}
+        >
+          <FloatingPanel
+            settings={settings}
+            onStartDrag={(e) => dragControls.start(e)}
+            onUpdateSettings={handleUpdateSettings}
+            isListening={isListening}
+            onToggleInterview={handleToggleInterview}
+            currentTranscript={currentTranscript}
+            suggestedAnswer={suggestedAnswer}
+            isGenerating={isGenerating}
+            audioLevel={audioLevel}
+            onAction={handleAction}
+            onOpenScreenModal={() => setIsScreenModalOpen(true)}
+            onOpenStealthModal={() => setIsStealthModalOpen(true)}
+            sessionDurationSec={sessionDurationSec}
+            onSelectPresetQuestion={handleSelectPresetQuestion}
+            onResetSession={() => {
+              setCurrentTranscript('');
+              setSuggestedAnswer('');
+              setSessionDurationSec(0);
+            }}
+          />
+        </motion.div>
+      )}
 
       {/* Screen Vision / Challenge OCR Modal */}
       <ScreenChallengeModal

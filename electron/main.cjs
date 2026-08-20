@@ -71,6 +71,24 @@ function createWindow() {
   });
 }
 
+// IPC Handlers from Frontend for dynamic resizing & window controls
+ipcMain.on('resize-window', (event, { width, height }) => {
+  if (!mainWindow) return;
+  const currentBounds = mainWindow.getBounds();
+  mainWindow.setSize(
+    Math.round(width || currentBounds.width),
+    Math.round(height || currentBounds.height)
+  );
+});
+
+ipcMain.on('close-window', () => {
+  if (mainWindow) mainWindow.close();
+});
+
+ipcMain.on('minimize-window', () => {
+  if (mainWindow) mainWindow.minimize();
+});
+
 app.whenReady().then(() => {
   createWindow();
 
