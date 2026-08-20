@@ -218,7 +218,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
         height: isMinimized ? 'auto' : `${panelHeight}px`,
         opacity: settings.windowOpacity || 1,
       }}
-      className="relative w-full rounded-[22px] overflow-hidden flex flex-col backdrop-blur-[36px] bg-neutral-950/95 border border-neutral-800/90 shadow-[0_20px_60px_rgba(0,0,0,0.9),inset_0_1px_1px_rgba(255,255,255,0.08)] text-neutral-100 transition-opacity duration-200 select-none"
+      className="relative w-full rounded-[20px] overflow-hidden flex flex-col bg-[#0d0f12] border border-neutral-800/80 shadow-[0_8px_24px_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.08)] text-neutral-100 transition-opacity duration-200 select-none"
     >
       {/* ================= TITLEBAR (Dark & Stealth & Native OS Drag Anchor) ================= */}
       <div
