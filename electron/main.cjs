@@ -1,4 +1,4 @@
-const { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, nativeImage, desktopCapturer, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { exec } = require('child_process');
@@ -210,7 +210,90 @@ ipcMain.on('minimize-window', () => {
   if (mainWindow) mainWindow.hide();
 });
 
+// Direct High-Resolution Screen Snapping for Challenge Solving
+ipcMain.handle('capture-desktop-screen', async () => {
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen', 'window'],
+      thumbnailSize: { width: 1920, height: 1080 },
+      fetchWindowIcons: false
+    });
+
+    if (sources && sources.length > 0) {
+      // Find primary screen or first available window
+      const targetSource = sources.find(s => s.id.startsWith('screen')) || sources[0];
+      const dataUrl = targetSource.thumbnail.toDataURL();
+      return { success: true, dataUrl };
+    }
+    return { success: false, error: 'No display screens found' };
+  } catch (err) {
+    console.error('Error capturing desktop screen:', err);
+    return { success: false, error: err.message || 'Capture failed' };
+  }
+});
+
+const CLOUD_BACKEND_URL = 'https://ais-dev-4lemfiuufuegchaty5ng22-930700759373.europe-west2.run.app';
+
+// AI Proxy handlers for Electron standalone execution
+ipcMain.handle('copilot-analyze-screen', async (event, payload) => {
+  try {
+    const res = await fetch(`${CLOUD_BACKEND_URL}/api/copilot/analyze-screen`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return await res.json();
+  } catch (err) {
+    console.error('Electron copilot-analyze-screen error:', err);
+    return { error: err.message || 'Screen analysis request failed' };
+  }
+});
+
+ipcMain.handle('copilot-answer', async (event, payload) => {
+  try {
+    const res = await fetch(`${CLOUD_BACKEND_URL}/api/copilot/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return await res.json();
+  } catch (err) {
+    console.error('Electron copilot-answer error:', err);
+    return { error: err.message || 'Answer request failed' };
+  }
+});
+
+ipcMain.handle('copilot-parse-resume', async (event, payload) => {
+  try {
+    const res = await fetch(`${CLOUD_BACKEND_URL}/api/copilot/parse-resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return await res.json();
+  } catch (err) {
+    console.error('Electron copilot-parse-resume error:', err);
+    return { error: err.message || 'Resume parsing request failed' };
+  }
+});
+
 app.whenReady().then(() => {
+  // Allow getDisplayMedia requests in Electron webPreferences
+  if (session.defaultSession.setDisplayMediaRequestHandler) {
+    session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+      desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
+        if (sources.length > 0) {
+          callback({ video: sources[0] });
+        } else {
+          callback({});
+        }
+      }).catch((err) => {
+        console.warn('setDisplayMediaRequestHandler error:', err);
+        callback({});
+      });
+    });
+  }
+
   createTrayIcon();
   createWindow();
 

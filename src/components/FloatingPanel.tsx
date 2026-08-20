@@ -30,6 +30,7 @@ import {
 import { UserSettings, PersonaType, SentenceLength, TranscriptItem, AppFontSize } from '../types';
 import { PERSONAS, PersonaInfo, SAMPLE_QUESTIONS } from '../utils/presets';
 import { speakAnswerWhisper, stopSpeaking } from '../utils/speech';
+import { apiFetch } from '../utils/apiClient';
 
 interface FloatingPanelProps {
   settings: UserSettings;
@@ -165,32 +166,32 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
       if (file.type === 'application/pdf') {
         const reader = new FileReader();
         reader.onload = async (ev) => {
-          const base64 = ev.target?.result as string;
-          const res = await fetch('/api/copilot/parse-resume', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fileBase64: base64, mimeType: 'application/pdf' }),
-          });
-          const data = await res.json();
-          onUpdateSettings({
-            resumeFileName: fileName,
-            candidateSummary: data.summary || 'Summary extracted successfully.',
-          });
-          setResumeParsing(false);
+          try {
+            const base64 = ev.target?.result as string;
+            const data = await apiFetch<{ summary?: string }>('/api/copilot/parse-resume', {
+              fileBase64: base64,
+              mimeType: 'application/pdf',
+            });
+            onUpdateSettings({
+              resumeFileName: fileName,
+              candidateSummary: data?.summary || 'Summary extracted successfully.',
+            });
+          } catch (err) {
+            console.error('PDF parsing error:', err);
+          } finally {
+            setResumeParsing(false);
+          }
         };
         reader.readAsDataURL(file);
       } else {
         const text = await file.text();
-        const res = await fetch('/api/copilot/parse-resume', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ rawText: text }),
+        const data = await apiFetch<{ summary?: string }>('/api/copilot/parse-resume', {
+          rawText: text,
         });
-        const data = await res.json();
         onUpdateSettings({
           resumeFileName: fileName,
           resumeRawText: text,
-          candidateSummary: data.summary || text.slice(0, 500),
+          candidateSummary: data?.summary || text.slice(0, 500),
         });
         setResumeParsing(false);
       }

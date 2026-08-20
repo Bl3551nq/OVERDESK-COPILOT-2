@@ -5,6 +5,7 @@ import { ScreenChallengeModal } from './components/ScreenChallengeModal';
 import { StealthAndExeModal } from './components/StealthAndExeModal';
 import { UserSettings } from './types';
 import { CopilotSpeechManager } from './utils/speech';
+import { apiFetch } from './utils/apiClient';
 
 const DEFAULT_SETTINGS: UserSettings = {
   persona: 'coding',
@@ -86,25 +87,20 @@ export default function App() {
     setIsGenerating(true);
 
     try {
-      const res = await fetch('/api/copilot/answer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question,
-          persona: settings.persona,
-          modelChoice: settings.modelChoice || 'gemini-3.7-flash',
-          resumeText: settings.candidateSummary || settings.resumeRawText,
-          interviewContext: settings.interviewContext,
-          sentenceLength: settings.sentenceLength,
-          mode,
-          previousAnswer: suggestedAnswer,
-        }),
+      const data = await apiFetch<{ answer?: string; fallback?: string }>('/api/copilot/answer', {
+        question,
+        persona: settings.persona,
+        modelChoice: settings.modelChoice || 'gemini-3.7-flash',
+        resumeText: settings.candidateSummary || settings.resumeRawText,
+        interviewContext: settings.interviewContext,
+        sentenceLength: settings.sentenceLength,
+        mode,
+        previousAnswer: suggestedAnswer,
       });
 
-      const data = await res.json();
-      if (data.answer) {
+      if (data?.answer) {
         setSuggestedAnswer(data.answer);
-      } else if (data.fallback) {
+      } else if (data?.fallback) {
         setSuggestedAnswer(data.fallback);
       }
     } catch (err) {
