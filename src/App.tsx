@@ -16,6 +16,7 @@ const DEFAULT_SETTINGS: UserSettings = {
   interviewContext: 'Senior Software Engineering Role, distributed architecture, API design, performance optimization, and system resilience.',
   sentenceLength: 'medium',
   hideFromScreenShare: true,
+  pinAboveFullscreen: true,
   autoTriggerOnSilence: true,
   audioInputSource: 'mic',
   speechTtsEnabled: false,
@@ -34,12 +35,20 @@ export default function App() {
   });
 
   const [isListening, setIsListening] = useState(false);
-  const [currentTranscript, setCurrentTranscript] = useState(
-    '"So walk me through how you\'d approach scaling this system..."'
-  );
-  const [suggestedAnswer, setSuggestedAnswer] = useState(
-    "I'd start by isolating the primary bottleneck—determining whether the workload is read-heavy or write-heavy—then implement an aggressive caching layer with Redis or partition databases horizontally using consistent hashing to maintain sub-50ms P99 latency."
-  );
+  const [currentTranscript, setCurrentTranscript] = useState(() => {
+    try {
+      return localStorage.getItem('overdesk_copilot_transcript') || '"So walk me through how you\'d approach scaling this system..."';
+    } catch {
+      return '"So walk me through how you\'d approach scaling this system..."';
+    }
+  });
+  const [suggestedAnswer, setSuggestedAnswer] = useState(() => {
+    try {
+      return localStorage.getItem('overdesk_copilot_suggested_answer') || "I'd start by isolating the primary bottleneck—determining whether the workload is read-heavy or write-heavy—then implement an aggressive caching layer with Redis or partition databases horizontally using consistent hashing to maintain sub-50ms P99 latency.";
+    } catch {
+      return "I'd start by isolating the primary bottleneck—determining whether the workload is read-heavy or write-heavy—then implement an aggressive caching layer with Redis or partition databases horizontally using consistent hashing to maintain sub-50ms P99 latency.";
+    }
+  });
   const [isGenerating, setIsGenerating] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
   const [sessionDurationSec, setSessionDurationSec] = useState(0);
@@ -52,12 +61,32 @@ export default function App() {
   const speechManagerRef = useRef<CopilotSpeechManager | null>(null);
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Save settings
+  // Sync state to localStorage & backend memory cache
+  useEffect(() => {
+    try {
+      localStorage.setItem('overdesk_copilot_transcript', currentTranscript);
+      localStorage.setItem('overdesk_copilot_suggested_answer', suggestedAnswer);
+    } catch (e) {}
+  }, [currentTranscript, suggestedAnswer]);
+
+  // Initial sync from server state cache if available
+  useEffect(() => {
+    apiFetch<{ state?: Record<string, any> }>('/api/copilot/state')
+      .then((res) => {
+        if (res?.state?.settings) {
+          setSettings((prev) => ({ ...prev, ...res.state.settings }));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Save settings with dual-layer memory (LocalStorage + Backend Cache)
   const handleUpdateSettings = (newSettings: Partial<UserSettings>) => {
     setSettings((prev) => {
       const updated = { ...prev, ...newSettings };
       try {
         localStorage.setItem('overdesk_copilot_settings', JSON.stringify(updated));
+        apiFetch('/api/copilot/state', { state: { settings: updated } }).catch(() => {});
       } catch (e) {
         console.warn('Failed to persist settings:', e);
       }

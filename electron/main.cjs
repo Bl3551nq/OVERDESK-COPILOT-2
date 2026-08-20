@@ -54,17 +54,60 @@ function applyTrueStealthExclusion(win) {
   }
 }
 
+/**
+ * Super-Priority Topmost Layer: Pins Over F11 Fullscreen Apps, Video Calls & Taskbar
+ * Uses 'screen-saver' level (1000 priority) + Win32 SetWindowPos HWND_TOPMOST
+ */
+function pinAboveFullscreen(win) {
+  if (!win || win.isDestroyed()) return;
+
+  try {
+    // 1. Electron top layer (screen-saver priority sits above F11 fullscreen windows & taskbars)
+    win.setAlwaysOnTop(true, 'screen-saver', 1);
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    win.moveTop();
+  } catch (e) {
+    console.warn('Electron setAlwaysOnTop notice:', e);
+  }
+
+  // 2. Native Win32 SetWindowPos (HWND_TOPMOST = -1, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE = 0x0013)
+  if (process.platform === 'win32') {
+    try {
+      const handleBuf = win.getNativeWindowHandle();
+      let hwndNum = '0';
+      if (typeof handleBuf.readBigInt64LE === 'function') {
+        hwndNum = handleBuf.readBigInt64LE(0).toString();
+      } else {
+        hwndNum = handleBuf.readInt32LE(0).toString();
+      }
+
+      const psPin = `powershell -NoProfile -NonInteractive -Command "$c = @'\nusing System;\nusing System.Runtime.InteropServices;\npublic class WinPin {\n  [DllImport(\\"user32.dll\\")]\n  public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);\n}\n'@; Add-Type -TypeDefinition $c; [WinPin]::SetWindowPos((IntPtr)${hwndNum}, (IntPtr)(-1), 0, 0, 0, 0, 0x0013);"`;
+      exec(psPin, () => {});
+    } catch (err) {
+      // ignore
+    }
+  }
+}
+
 function createTrayIcon() {
-  // Generate a clean high-resolution tray icon programmatically (emerald dot / shield)
-  // This ensures a crisp icon is always present on Windows system tray without external image dependencies
-  const size = 32;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none">
-    <circle cx="12" cy="12" r="10" fill="#09090b" stroke="#10b981" stroke-width="2.5"/>
-    <circle cx="12" cy="12" r="4.5" fill="#10b981"/>
+  // Verified Blue Scalloped Badge tray icon
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="64" height="64">
+    <path fill="#0084FF" d="M512 256c0 28.5-12.7 54.1-32.9 71.4 6.7 27.8 2.2 57.7-12.6 81.3-17.7 28.3-46.7 45.4-78.2 47.9-10.4 26.7-31.5 47.8-58.2 58.2-31.8 12.4-67.4 5.3-92.1-17.8-24.7 23.1-60.3 30.2-92.1 17.8-26.7-10.4-47.8-31.5-58.2-58.2-31.5-2.5-60.5-19.6-78.2-47.9-14.8-23.6-19.3-53.5-12.6-81.3C12.7 310.1 0 284.5 0 256s12.7-54.1 32.9-71.4c-6.7-27.8-2.2-57.7 12.6-81.3 17.7-28.3 46.7-45.4 78.2-47.9 10.4-26.7 31.5-47.8 58.2-58.2 31.8-12.4 67.4-5.3 92.1 17.8 24.7-23.1 60.3-30.2 92.1-17.8 26.7 10.4 47.8 31.5 58.2 58.2 31.5 2.5 60.5 19.6 78.2 47.9 14.8 23.6 19.3 53.5 12.6 81.3C499.3 201.9 512 227.5 512 256z"/>
+    <path fill="#FFFFFF" d="M227.3 358.6l-84.9-84.9c-9.4-9.4-9.4-24.6 0-33.9 9.4-9.4 24.6-9.4 33.9 0l51 51 123.1-123.1c9.4-9.4 24.6-9.4 33.9 0 9.4 9.4 9.4 24.6 0 33.9L227.3 358.6z"/>
   </svg>`;
 
-  const icon = nativeImage.createFromBuffer(Buffer.from(svg));
-  tray = new Tray(icon.resize({ width: 16, height: 16 }));
+  let icon = null;
+  const localIconPath = path.join(__dirname, '../public/verify.svg');
+  if (fs.existsSync(localIconPath)) {
+    try {
+      icon = nativeImage.createFromPath(localIconPath);
+    } catch (e) {}
+  }
+  if (!icon || icon.isEmpty()) {
+    icon = nativeImage.createFromBuffer(Buffer.from(svg));
+  }
+
+  tray = new Tray(icon.resize({ width: 18, height: 18 }));
 
   const contextMenu = Menu.buildFromTemplate([
     {
@@ -126,6 +169,7 @@ function createWindow() {
     alwaysOnTop: true,       // Always floating on top of all windows
     hasShadow: false,
     skipTaskbar: true,       // 100% hidden from the Windows Taskbar (only in System Tray)
+    fullscreenable: false,   // Prevent OS full screen managers from covering this window
     show: true,
     webPreferences: {
       nodeIntegration: true,
@@ -138,14 +182,52 @@ function createWindow() {
   // Excludes window from screen capture/recordings/sharing (Zoom, Google Meet, Teams, Discord, OBS)
   // using WDA_EXCLUDEFROMCAPTURE (17) so NO black box or shadow appears during screen shares.
   applyTrueStealthExclusion(mainWindow);
+  pinAboveFullscreen(mainWindow);
 
   mainWindow.once('ready-to-show', () => {
     applyTrueStealthExclusion(mainWindow);
+    pinAboveFullscreen(mainWindow);
   });
 
   mainWindow.on('show', () => {
     applyTrueStealthExclusion(mainWindow);
+    pinAboveFullscreen(mainWindow);
   });
+
+  // Re-assert topmost when other windows trigger blur, focus, or fullscreen transitions
+  mainWindow.on('blur', () => {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+      pinAboveFullscreen(mainWindow);
+    }
+  });
+
+  mainWindow.on('focus', () => {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+      pinAboveFullscreen(mainWindow);
+    }
+  });
+
+  mainWindow.on('restore', () => {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+      pinAboveFullscreen(mainWindow);
+    }
+  });
+
+  mainWindow.on('always-on-top-changed', () => {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+      pinAboveFullscreen(mainWindow);
+    }
+  });
+
+  // Heartbeat pinning timer: Guarantees F11 fullscreen apps / taskbars can never cover the window
+  setInterval(() => {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+      try {
+        mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
+        mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+      } catch (e) {}
+    }
+  }, 1500);
 
   // Load built index.html from dist
   if (process.env.ELECTRON_START_URL) {
@@ -175,7 +257,14 @@ function createWindow() {
     } else {
       mainWindow.show();
       mainWindow.focus();
+      pinAboveFullscreen(mainWindow);
     }
+  });
+
+  // Keyboard shortcut: Ctrl + Shift + T to force re-pin overlay to ultra-topmost layer
+  globalShortcut.register('CommandOrControl+Shift+T', () => {
+    if (!mainWindow) return;
+    pinAboveFullscreen(mainWindow);
   });
 
   mainWindow.on('close', (event) => {
@@ -208,6 +297,10 @@ ipcMain.on('close-window', () => {
 
 ipcMain.on('minimize-window', () => {
   if (mainWindow) mainWindow.hide();
+});
+
+ipcMain.on('pin-above-fullscreen', () => {
+  if (mainWindow) pinAboveFullscreen(mainWindow);
 });
 
 // Direct High-Resolution Screen Snapping for Challenge Solving

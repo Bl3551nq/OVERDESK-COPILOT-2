@@ -47,8 +47,9 @@ export interface ParseResumeRequest {
 /**
  * Universal safe API caller: tries local/relative route, falls back to Cloud backend automatically
  */
-export async function apiFetch<T>(endpoint: string, body: any): Promise<T> {
+export async function apiFetch<T>(endpoint: string, body?: any): Promise<T> {
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const method = body !== undefined ? 'POST' : 'GET';
 
   // Check if Electron IPC handler is available
   try {
@@ -75,9 +76,9 @@ export async function apiFetch<T>(endpoint: string, body: any): Promise<T> {
 
   try {
     const res = await fetch(primaryUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      method,
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
     });
 
     if (res.ok) {
@@ -92,9 +93,9 @@ export async function apiFetch<T>(endpoint: string, body: any): Promise<T> {
     if (primaryUrl !== `${HOSTED_BACKEND_ORIGIN}${cleanEndpoint}`) {
       const fallbackUrl = `${HOSTED_BACKEND_ORIGIN}${cleanEndpoint}`;
       const fallbackRes = await fetch(fallbackUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        method,
+        headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
       });
 
       if (fallbackRes.ok) {

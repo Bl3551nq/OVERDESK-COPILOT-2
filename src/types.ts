@@ -16,6 +16,7 @@ export interface UserSettings {
   interviewContext: string;
   sentenceLength: SentenceLength;
   hideFromScreenShare: boolean;
+  pinAboveFullscreen?: boolean;
   autoTriggerOnSilence: boolean;
   audioInputSource: 'mic' | 'system' | 'mixed';
   speechTtsEnabled: boolean;

@@ -315,6 +315,21 @@ Persona focus: ${persona}`,
     }
   });
 
+  // Persistent App Memory Cache (Settings, Candidate Profile, Context, Notes)
+  let persistentAppMemory: Record<string, any> = {};
+
+  app.get('/api/copilot/state', (req, res) => {
+    return res.json({ state: persistentAppMemory, timestamp: Date.now() });
+  });
+
+  app.post('/api/copilot/state', (req, res) => {
+    const { state } = req.body || {};
+    if (state && typeof state === 'object') {
+      persistentAppMemory = { ...persistentAppMemory, ...state };
+    }
+    return res.json({ success: true, timestamp: Date.now() });
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

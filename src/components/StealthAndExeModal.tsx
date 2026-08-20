@@ -12,23 +12,36 @@ export const StealthAndExeModal: React.FC<StealthAndExeModalProps> = ({ isOpen, 
 
   if (!isOpen) return null;
 
-  const electronCodeSnippet = `// main.js - Native Windows Exe Stealth Configuration
-const { app, BrowserWindow } = require('electron');
+  const electronCodeSnippet = `// main.js - Native Windows Exe Stealth & Fullscreen Pinning
+const { app, BrowserWindow, globalShortcut } = require('electron');
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 400,
-    height: 600,
+    width: 440,
+    height: 680,
     frame: false,
     transparent: true,
-    alwaysOnTop: true, // Always float above all windows
+    alwaysOnTop: true,
     skipTaskbar: true,
+    fullscreenable: false, // Prevents OS from hiding window when other apps go full screen
     webPreferences: { nodeIntegration: true }
   });
 
-  // Windows Native Stealth API: Exclude from all screen capture / Zoom / Teams / Meet
-  // Native Win32 SetWindowDisplayAffinity(hwnd, 0x00000011 /* WDA_EXCLUDEFROMCAPTURE */)
+  // 1. Invisible on Screen Share (Zoom, Meet, Teams, OBS)
   win.setContentProtection(true);
+
+  // 2. Ultra-Topmost Layer: Pins Over F11 Fullscreen Tests & Windows Taskbar
+  win.setAlwaysOnTop(true, 'screen-saver', 1);
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+  // Re-pin whenever window blurs or transitions
+  win.on('blur', () => win.setAlwaysOnTop(true, 'screen-saver', 1));
+
+  // Shortcut Ctrl+Shift+T to re-assert topmost layer instantly
+  globalShortcut.register('CommandOrControl+Shift+T', () => {
+    win.setAlwaysOnTop(true, 'screen-saver', 1);
+    win.moveTop();
+  });
 
   win.loadURL('http://localhost:3000');
 }
@@ -133,13 +146,16 @@ app.whenReady().then(createWindow);`;
                 </div>
                 <ul className="space-y-1.5 list-disc pl-4 text-neutral-300 text-[11.5px]">
                   <li>
-                    <strong className="text-white">Always-On-Top Layering:</strong> Never gets buried beneath full-screen IDEs or browsers.
+                    <strong className="text-white">F11 Fullscreen & Taskbar Overlay:</strong> Configured with screen-saver priority and Win32 Topmost pinning so it stays visible over F11 fullscreen test browsers (HackerRank, Codility, HireVue), video calls, and the Windows taskbar.
                   </li>
                   <li>
-                    <strong className="text-white">Adjustable Transparency:</strong> Dim opacity so you can read through code seamlessly.
+                    <strong className="text-white">Re-Pin Hotkey:</strong> Press <code className="bg-white/10 px-1 rounded text-white font-mono">Ctrl + Shift + T</code> to immediately re-lock overlay priority over any full-screen window.
                   </li>
                   <li>
-                    <strong className="text-white">Hotkeys Support:</strong> Toggle hide/show in 1 millisecond using keyboard shortcuts (<code className="bg-white/10 px-1 rounded text-white">Ctrl + Shift + H</code>).
+                    <strong className="text-white">Adjustable Transparency:</strong> Dim opacity from 50% to 100% so you can read background code seamlessly.
+                  </li>
+                  <li>
+                    <strong className="text-white">Panic Hide Hotkey:</strong> Toggle hide/show in 1 millisecond using <code className="bg-white/10 px-1 rounded text-white font-mono">Ctrl + Shift + H</code>.
                   </li>
                 </ul>
               </div>

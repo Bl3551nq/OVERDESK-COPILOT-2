@@ -25,6 +25,7 @@ import {
   Maximize2,
   Minimize2,
   Type,
+  Pin,
   X,
 } from 'lucide-react';
 import { UserSettings, PersonaType, SentenceLength, TranscriptItem, AppFontSize } from '../types';
@@ -73,11 +74,19 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
   const [isWhispering, setIsWhispering] = useState(false);
   const [showPresetsDropdown, setShowPresetsDropdown] = useState(false);
   const [customQuestionInput, setCustomQuestionInput] = useState('');
+  const [saveSuccessNotice, setSaveSuccessNotice] = useState(false);
   const ORIGINAL_HEIGHT = 580;
   const MAX_HEIGHT = Math.round(ORIGINAL_HEIGHT * 1.5); // 870px (1.5x original)
   const MIN_HEIGHT = ORIGINAL_HEIGHT; // Cannot go below normal original size when not minimized
 
-  const [panelHeight, setPanelHeight] = useState(ORIGINAL_HEIGHT);
+  const [panelHeight, setPanelHeight] = useState(() => {
+    try {
+      const saved = localStorage.getItem('overdesk_copilot_panel_height');
+      return saved ? Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, parseInt(saved, 10))) : ORIGINAL_HEIGHT;
+    } catch {
+      return ORIGINAL_HEIGHT;
+    }
+  });
   const [isResizing, setIsResizing] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [resumeParsing, setResumeParsing] = useState(false);
@@ -85,6 +94,13 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const initialTopRef = useRef<number>(0);
+
+  // Persist panel height changes
+  useEffect(() => {
+    try {
+      localStorage.setItem('overdesk_copilot_panel_height', panelHeight.toString());
+    } catch (e) {}
+  }, [panelHeight]);
 
   // Bottom resize drag handler (strictly resizes only from bottom downwards, bounded between ORIGINAL_HEIGHT and 1.5x ORIGINAL_HEIGHT)
   useEffect(() => {
@@ -309,10 +325,52 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
           </div>
           <span className="text-[13.5px] font-bold tracking-wide text-white flex items-center gap-1.5">
             Overdesk <span className="text-emerald-400 font-medium">· Copilot</span>
+            <svg
+              viewBox="0 0 512 512"
+              className="w-4 h-4 text-sky-400 inline-block drop-shadow-[0_1px_4px_rgba(0,132,255,0.4)]"
+              xmlns="http://www.w3.org/2000/svg"
+              title="Verified Overdesk Pro (System Tray & Memory Active)"
+            >
+              <path
+                fill="#0084FF"
+                d="M512 256c0 28.5-12.7 54.1-32.9 71.4 6.7 27.8 2.2 57.7-12.6 81.3-17.7 28.3-46.7 45.4-78.2 47.9-10.4 26.7-31.5 47.8-58.2 58.2-31.8 12.4-67.4 5.3-92.1-17.8-24.7 23.1-60.3 30.2-92.1 17.8-26.7 10.4-47.8 31.5-58.2 58.2-31.5 2.5-60.5 19.6-78.2-47.9-14.8-23.6-19.3-53.5-12.6-81.3C12.7 310.1 0 284.5 0 256s12.7-54.1 32.9-71.4c-6.7-27.8-2.2-57.7 12.6-81.3 17.7-28.3 46.7-45.4 78.2-47.9 10.4-26.7 31.5-47.8 58.2-58.2 31.8-12.4 67.4-5.3 92.1 17.8 24.7-23.1 60.3-30.2 92.1-17.8 26.7 10.4 47.8 31.5 58.2 58.2 31.5 2.5 60.5 19.6 78.2 47.9 14.8 23.6 19.3 53.5 12.6 81.3C499.3 201.9 512 227.5 512 256z"
+              />
+              <path
+                fill="#FFFFFF"
+                d="M227.3 358.6l-84.9-84.9c-9.4-9.4-9.4-24.6 0-33.9 9.4-9.4 24.6-9.4 33.9 0l51 51 123.1-123.1c9.4-9.4 24.6-9.4 33.9 0 9.4 9.4 9.4 24.6 0 33.9L227.3 358.6z"
+              />
+            </svg>
           </span>
         </div>
 
         <div className="flex items-center gap-1.5 app-no-drag">
+          {/* Pinned over Fullscreen badge */}
+          <button
+            onClick={() => {
+              const nextVal = !(settings.pinAboveFullscreen ?? true);
+              onUpdateSettings({ pinAboveFullscreen: nextVal });
+              try {
+                const electron = (window as any).require?.('electron');
+                if (electron?.ipcRenderer) {
+                  electron.ipcRenderer.send('pin-above-fullscreen');
+                }
+              } catch (e) {}
+            }}
+            title={
+              (settings.pinAboveFullscreen ?? true)
+                ? 'Pinned: Floats above F11 fullscreen apps, browser tests & taskbar (Ctrl+Shift+T)'
+                : 'Click to lock overlay above F11 fullscreen apps'
+            }
+            className={`app-no-drag px-2 py-0.5 rounded-full border text-[10px] font-semibold flex items-center gap-1 transition-colors cursor-pointer ${
+              (settings.pinAboveFullscreen ?? true)
+                ? 'bg-sky-500/15 border-sky-400/40 text-sky-300 hover:bg-sky-500/25'
+                : 'bg-neutral-900 border-neutral-700/60 text-neutral-400 hover:text-white'
+            }`}
+          >
+            <Pin className={`w-2.5 h-2.5 ${(settings.pinAboveFullscreen ?? true) ? 'rotate-45 text-sky-300' : ''}`} />
+            <span>{(settings.pinAboveFullscreen ?? true) ? 'Pinned' : 'Pin'}</span>
+          </button>
+
           {/* Stealth badge */}
           {settings.hideFromScreenShare && (
             <button
@@ -814,6 +872,41 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                 </div>
               </div>
 
+              {/* Pin Above Fullscreen (F11) & Taskbar Toggle */}
+              <div className="pt-2 border-t border-white/15 flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-semibold text-white flex items-center gap-1.5">
+                    <Pin className="w-3.5 h-3.5 text-sky-400" />
+                    Overlay F11 Fullscreen & Taskbar
+                  </div>
+                  <div className="text-[10px] text-neutral-400">
+                    Always stays topmost above fullscreen browser tests, proctored screens, video calls & taskbar
+                  </div>
+                </div>
+
+                <div
+                  onClick={() => {
+                    const nextVal = !(settings.pinAboveFullscreen ?? true);
+                    onUpdateSettings({ pinAboveFullscreen: nextVal });
+                    try {
+                      const electron = (window as any).require?.('electron');
+                      if (electron?.ipcRenderer) {
+                        electron.ipcRenderer.send('pin-above-fullscreen');
+                      }
+                    } catch (e) {}
+                  }}
+                  className={`w-10 h-6 rounded-full p-0.5 cursor-pointer transition-colors ${
+                    (settings.pinAboveFullscreen ?? true) ? 'bg-sky-500' : 'bg-neutral-700'
+                  }`}
+                >
+                  <div
+                    className={`w-5 h-5 rounded-full bg-white transition-transform ${
+                      (settings.pinAboveFullscreen ?? true) ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </div>
+              </div>
+
               {/* Stealth & Overlay Toggle */}
               <div className="pt-2 border-t border-white/15 flex items-center justify-between">
                 <div>
@@ -859,12 +952,44 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                 />
               </div>
 
+              {/* Persistent App Memory Status */}
+              <div className="pt-2 border-t border-white/15">
+                <div className="p-2.5 rounded-xl bg-sky-500/10 border border-sky-500/25 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
+                    <div>
+                      <div className="text-[11.5px] font-bold text-sky-200">App Memory & State: Active</div>
+                      <div className="text-[9.5px] text-neutral-400">Settings, resume profile & notes persist across app restarts</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-mono text-sky-300 bg-sky-500/20 px-1.5 py-0.5 rounded border border-sky-400/30">
+                    Saved ✓
+                  </span>
+                </div>
+              </div>
+
               {/* Save & Return */}
               <button
-                onClick={() => setCurrentView('home')}
-                className="w-full py-2.5 rounded-xl bg-white text-neutral-950 font-bold text-xs hover:bg-neutral-200 transition-colors shadow cursor-pointer mt-2"
+                onClick={() => {
+                  setSaveSuccessNotice(true);
+                  setTimeout(() => {
+                    setSaveSuccessNotice(false);
+                    setCurrentView('home');
+                  }, 400);
+                }}
+                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-emerald-500 text-white font-bold text-xs hover:opacity-95 transition-all shadow cursor-pointer mt-2 flex items-center justify-center gap-1.5"
               >
-                Save & Return
+                {saveSuccessNotice ? (
+                  <>
+                    <Check className="w-4 h-4 text-white" />
+                    <span>Saved to Memory!</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4 text-white" />
+                    <span>Save & Return</span>
+                  </>
+                )}
               </button>
             </div>
           )}
