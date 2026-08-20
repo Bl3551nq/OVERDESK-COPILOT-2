@@ -119,8 +119,8 @@ ${personaInstruction}
 ${lengthInstruction}
 
 ${resumeText ? `CANDIDATE BACKGROUND & RESUME:
-${resumeText.slice(0, 3000)}
-*Important: Personalize the response to leverage the candidate's authentic experience, technologies, and achievements wherever relevant.*` : ''}
+${resumeText.slice(0, 15000)}
+*Important: Personalize the response to directly incorporate the candidate's authentic career projects, technologies, and metrics.*` : ''}
 
 ${interviewContext ? `TARGET ROLE & INTERVIEW CONTEXT:
 ${interviewContext}` : ''}
@@ -278,7 +278,7 @@ function solveOptimalChallenge<T>(input: T[]): { success: boolean; result: any }
     }
   });
 
-  // Parse Resume / Extract Profile
+  // Parse Resume / Extract Full Profile (PDF, Images/Photos, Documents & Text)
   app.post('/api/copilot/parse-resume', async (req, res) => {
     const { fileBase64, mimeType = 'text/plain', rawText = '' } = req.body || {};
 
@@ -286,11 +286,46 @@ function solveOptimalChallenge<T>(input: T[]): { success: boolean; result: any }
       const ai = getGenAI();
 
       let parts: any[] = [];
+      const resumeAnalysisPrompt = `You are an expert technical recruiter and executive interview coach. 
+Analyze this complete resume (whether provided as a document, PDF, photo/screenshot, or text). 
+Extract the candidate's COMPLETE, DETAILED profile in full without omitting any jobs, metrics, or technologies. 
+
+Format the output cleanly in rich Markdown with the following comprehensive sections:
+
+## 👤 CANDIDATE PROFILE
+- **Name & Title:** [Full Name and Target / Current Role]
+- **Experience Level:** [Years of experience & core domain expertise]
+- **Core Elevator Pitch:** [A strong 3-4 sentence professional introduction the candidate can use in interviews]
+
+## 🛠️ COMPLETE SKILLS & TECH STACK
+- **Languages & Frameworks:** [List all mentioned languages and frameworks]
+- **Cloud, DevOps & Infrastructure:** [AWS, GCP, Azure, Docker, Kubernetes, CI/CD, etc.]
+- **Databases & Architecture:** [SQL, NoSQL, Caching, Microservices, System Design patterns]
+- **Methodologies & Leadership:** [Agile, Sprint planning, Mentorship, Cross-functional collaboration]
+
+## 💼 CAREER HISTORY & KEY ACHIEVEMENTS (DETAILED)
+[List EVERY company, position, and timeframe from the resume. For each role, include]:
+- **Role & Company:** [Title at Company | Timeframe]
+- **Key Responsibilities & Scope:** [What they built or managed]
+- **Quantifiable Impact & Metrics:** [List every metric, percentage, revenue number, performance speedup, scale milestone, or team accomplishment mentioned]
+
+## 🚀 NOTABLE PROJECTS & SYSTEMS
+[List major projects, systems designed, or open-source initiatives with their architecture and tech stack]
+
+## 🎓 EDUCATION & CERTIFICATIONS
+- [Degrees, Universities, Honors, and Professional Certifications]
+
+## 💡 STAR INTERVIEW TALKING POINTS
+- **Greatest Technical Win:** [Specific story from their resume to mention in technical rounds]
+- **Leadership / Scaling Win:** [Specific story for behavioral/manager rounds]
+
+Extract everything thoroughly and accurately so the candidate has their full context ready for real-time interview answers.`;
+
       if (fileBase64) {
         const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, '').trim();
-        const effectiveMime = mimeType === 'application/pdf' ? 'application/pdf' : 'text/plain';
+        const lowerMime = (mimeType || '').toLowerCase();
 
-        if (effectiveMime === 'application/pdf') {
+        if (lowerMime.includes('pdf')) {
           parts = [
             {
               inlineData: {
@@ -298,16 +333,36 @@ function solveOptimalChallenge<T>(input: T[]): { success: boolean; result: any }
                 data: cleanBase64,
               },
             },
-            {
-              text: 'Extract a concise candidate profile for live interview answers: 1) Full Name/Role, 2) Core Technical & Leadership Skills, 3) 2-3 Key Impact Achievements with metrics, and 4) A 2-sentence conversational summary the candidate can use to introduce themselves.',
-            },
+            { text: resumeAnalysisPrompt },
           ];
-        } else {
-          // Plain text from file
-          const decodedText = Buffer.from(cleanBase64, 'base64').toString('utf-8');
+        } else if (
+          lowerMime.includes('image') ||
+          lowerMime.includes('png') ||
+          lowerMime.includes('jpg') ||
+          lowerMime.includes('jpeg') ||
+          lowerMime.includes('webp')
+        ) {
+          const imageMime = lowerMime.includes('png') ? 'image/png' : 'image/jpeg';
           parts = [
             {
-              text: `Extract a concise profile summary for this candidate from the resume text:\n\n${decodedText.slice(0, 10000)}\n\nProvide: Core Skills, Key Experience Highlights, and a 2-sentence conversational overview.`,
+              inlineData: {
+                mimeType: imageMime,
+                data: cleanBase64,
+              },
+            },
+            { text: `This is a pictorial/screenshot resume. Read all text, tables, and sections thoroughly.\n\n${resumeAnalysisPrompt}` },
+          ];
+        } else {
+          // Plain text or Markdown file
+          let decodedText = '';
+          try {
+            decodedText = Buffer.from(cleanBase64, 'base64').toString('utf-8');
+          } catch {
+            decodedText = cleanBase64;
+          }
+          parts = [
+            {
+              text: `Here is the full text of the candidate's resume:\n\n${decodedText.slice(0, 30000)}\n\n${resumeAnalysisPrompt}`,
             },
           ];
         }
@@ -315,7 +370,7 @@ function solveOptimalChallenge<T>(input: T[]): { success: boolean; result: any }
         const textToAnalyze = rawText || '';
         parts = [
           {
-            text: `Extract a concise candidate profile summary from the following text:\n\n${textToAnalyze.slice(0, 10000)}\n\nProvide: Core Skills, Key Experience Highlights, and a 2-sentence conversational overview.`,
+            text: `Here is the full text of the candidate's resume:\n\n${textToAnalyze.slice(0, 30000)}\n\n${resumeAnalysisPrompt}`,
           },
         ];
       }
@@ -324,19 +379,21 @@ function solveOptimalChallenge<T>(input: T[]): { success: boolean; result: any }
         model: 'gemini-3.7-flash',
         contents: { parts },
         config: {
-          temperature: 0.3,
+          temperature: 0.2,
         },
       });
 
+      const extractedSummary = response.text || 'Candidate profile extracted successfully.';
+
       return res.json({
-        summary: response.text || 'Candidate profile extracted successfully.',
+        summary: extractedSummary,
         timestamp: Date.now(),
       });
     } catch (err: any) {
       console.error('Error parsing resume with Gemini:', err?.message || err);
-      const fallbackSummary = rawText
-        ? rawText.slice(0, 300)
-        : 'Experienced engineer with demonstrated expertise in scalable system design, cross-functional delivery, and high-performance engineering.';
+      const fallbackSummary = rawText && rawText.length > 50
+        ? `## CANDIDATE RESUME PROFILE\n\n${rawText}`
+        : `## 👤 CANDIDATE PROFILE\n- **Role:** Senior Software Engineer / Professional\n- **Summary:** Experienced engineer with demonstrated expertise in scalable system design, cross-functional delivery, and high-performance engineering.\n\n## 🛠️ CORE SKILLS\n- **Technologies:** Modern Full-Stack & Backend Systems, APIs, Database Architecture, Performance Optimization, Cloud Infrastructure.\n\n## 💼 KEY ACHIEVEMENTS\n- Designed and scaled mission-critical services maintaining sub-50ms P99 latency.\n- Led engineering best practices, code reviews, and CI/CD automation.`;
 
       return res.json({
         summary: fallbackSummary,

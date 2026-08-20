@@ -325,6 +325,40 @@ ipcMain.handle('capture-desktop-screen', async () => {
   }
 });
 
+// Disk-backed persistent settings for installed desktop app (Survives app close, restarts & updates)
+const getSettingsFilePath = () => {
+  try {
+    const userDataDir = app.getPath('userData');
+    return path.join(userDataDir, 'overdesk_settings.json');
+  } catch (e) {
+    return path.join(__dirname, 'overdesk_settings.json');
+  }
+};
+
+ipcMain.handle('copilot-load-settings', async () => {
+  try {
+    const p = getSettingsFilePath();
+    if (fs.existsSync(p)) {
+      const content = fs.readFileSync(p, 'utf-8');
+      return { success: true, settings: JSON.parse(content) };
+    }
+  } catch (e) {
+    console.warn('Could not read settings from disk:', e);
+  }
+  return { success: false };
+});
+
+ipcMain.handle('copilot-save-settings', async (event, settings) => {
+  try {
+    const p = getSettingsFilePath();
+    fs.writeFileSync(p, JSON.stringify(settings, null, 2), 'utf-8');
+    return { success: true };
+  } catch (e) {
+    console.warn('Could not write settings to disk:', e);
+    return { success: false, error: e.message };
+  }
+});
+
 const CLOUD_BACKEND_URL = 'https://ais-dev-4lemfiuufuegchaty5ng22-930700759373.europe-west2.run.app';
 
 // AI Proxy handlers for Electron standalone execution

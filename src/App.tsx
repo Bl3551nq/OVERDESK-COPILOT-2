@@ -28,25 +28,27 @@ export default function App() {
   const [settings, setSettings] = useState<UserSettings>(() => {
     try {
       const saved = localStorage.getItem('overdesk_copilot_settings');
-      return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS;
-    } catch {
-      return DEFAULT_SETTINGS;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return { ...DEFAULT_SETTINGS, ...parsed };
+      }
+    } catch (e) {
+      console.warn('LocalStorage load note:', e);
     }
+    return DEFAULT_SETTINGS;
   });
 
   const [isListening, setIsListening] = useState(false);
   const [currentTranscript, setCurrentTranscript] = useState(() => {
     try {
-      const saved = localStorage.getItem('overdesk_copilot_transcript');
-      return saved || '';
+      return localStorage.getItem('overdesk_copilot_transcript') || '';
     } catch {
       return '';
     }
   });
   const [suggestedAnswer, setSuggestedAnswer] = useState(() => {
     try {
-      const saved = localStorage.getItem('overdesk_copilot_suggested_answer');
-      return saved || '';
+      return localStorage.getItem('overdesk_copilot_suggested_answer') || '';
     } catch {
       return '';
     }
@@ -63,7 +65,7 @@ export default function App() {
   const speechManagerRef = useRef<CopilotSpeechManager | null>(null);
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Sync state to localStorage & backend memory cache
+  // Persistent storage: LocalStorage + Electron Disk File + Server State Cache
   useEffect(() => {
     try {
       localStorage.setItem('overdesk_copilot_transcript', currentTranscript);
@@ -71,27 +73,51 @@ export default function App() {
     } catch (e) {}
   }, [currentTranscript, suggestedAnswer]);
 
-  // Initial sync from server state cache if available
+  // Initial deep load from Electron disk file & Cloud state cache
   useEffect(() => {
+    // 1. Check Electron native disk storage
+    try {
+      const electron = (window as any).require?.('electron');
+      if (electron?.ipcRenderer) {
+        electron.ipcRenderer.invoke('copilot-load-settings').then((res: any) => {
+          if (res?.success && res?.settings) {
+            setSettings((prev) => ({ ...prev, ...res.settings }));
+          }
+        }).catch(() => {});
+      }
+    } catch (e) {}
+
+    // 2. Sync from server state cache
     apiFetch<{ state?: Record<string, any> }>('/api/copilot/state')
       .then((res) => {
-        if (res?.state?.settings) {
+        if (res?.state?.settings && Object.keys(res.state.settings).length > 0) {
           setSettings((prev) => ({ ...prev, ...res.state.settings }));
         }
       })
       .catch(() => {});
   }, []);
 
-  // Save settings with dual-layer memory (LocalStorage + Backend Cache)
+  // Save settings across all storage layers (LocalStorage, Electron Disk File & Server Memory)
   const handleUpdateSettings = (newSettings: Partial<UserSettings>) => {
     setSettings((prev) => {
       const updated = { ...prev, ...newSettings };
       try {
         localStorage.setItem('overdesk_copilot_settings', JSON.stringify(updated));
-        apiFetch('/api/copilot/state', { state: { settings: updated } }).catch(() => {});
       } catch (e) {
-        console.warn('Failed to persist settings:', e);
+        console.warn('LocalStorage save note:', e);
       }
+
+      // Save to Electron disk file if in desktop mode
+      try {
+        const electron = (window as any).require?.('electron');
+        if (electron?.ipcRenderer) {
+          electron.ipcRenderer.invoke('copilot-save-settings', updated).catch(() => {});
+        }
+      } catch (e) {}
+
+      // Save to backend state memory
+      apiFetch('/api/copilot/state', { state: { settings: updated } }).catch(() => {});
+
       return updated;
     });
   };
@@ -109,13 +135,25 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isListening]);
 
-  // Request backend answer
+  // Request backend answer with optimistic instant updates
   const fetchAnswer = async (
     question: string,
     mode: 'generate' | 'shorter' | 'rephrase' | 'regenerate' = 'generate'
   ) => {
-    const activeQuestion = question || currentTranscript || (suggestedAnswer ? 'Current interview topic' : '');
-    if (!activeQuestion && !suggestedAnswer) return;
+    const activeQuestion = question || currentTranscript || (suggestedAnswer ? 'Current interview topic' : 'General Technical Interview Question');
+    const prevAnswer = suggestedAnswer;
+
+    // Instant optimistic transform for zero-latency user feedback
+    if (mode === 'shorter' && prevAnswer) {
+      const sentences = prevAnswer.split(/(?<=[.?!])\s+/).filter(Boolean);
+      const shortened = sentences.slice(0, Math.max(1, Math.min(2, Math.ceil(sentences.length / 2)))).join(' ');
+      setSuggestedAnswer(shortened || prevAnswer);
+    } else if (mode === 'rephrase' && prevAnswer) {
+      setSuggestedAnswer(
+        `In my direct experience, ${prevAnswer.replace(/^(I would|I approach|To solve this|In my experience,|Basically,)\s*/i, '')}`
+      );
+    }
+
     setIsGenerating(true);
 
     try {
@@ -127,28 +165,38 @@ export default function App() {
         interviewContext: settings.interviewContext,
         sentenceLength: settings.sentenceLength,
         mode,
-        previousAnswer: suggestedAnswer,
+        previousAnswer: prevAnswer,
       });
 
-      if (data?.answer) {
-        setSuggestedAnswer(data.answer);
+      if (data?.answer && data.answer.trim()) {
+        setSuggestedAnswer(data.answer.trim());
       } else if (data?.fallback) {
         setSuggestedAnswer(data.fallback);
       }
     } catch (err: any) {
-      console.error('Answer generation error:', err);
-      // Client-side smart transformation fallback
-      if (mode === 'shorter' && suggestedAnswer) {
-        const sentences = suggestedAnswer.split(/(?<=[.?!])\s+/).filter(Boolean);
-        const shortened = sentences.slice(0, Math.max(1, Math.min(2, Math.ceil(sentences.length / 2)))).join(' ');
-        setSuggestedAnswer(shortened || suggestedAnswer);
-      } else if (mode === 'rephrase' && suggestedAnswer) {
+      console.warn('Answer generation fallback active:', err?.message || err);
+
+      // Smart programmatic fallback if offline or API limit
+      if (mode === 'shorter') {
+        const sentences = (prevAnswer || activeQuestion).split(/(?<=[.?!])\s+/).filter(Boolean);
+        setSuggestedAnswer(sentences.slice(0, Math.max(1, Math.min(2, Math.ceil(sentences.length / 2)))).join(' '));
+      } else if (mode === 'rephrase') {
         setSuggestedAnswer(
-          `In my experience, ${suggestedAnswer.replace(/^(I would|I approach|To solve this|In my experience,)\s*/i, '')}`
+          `From an architectural standpoint, I prioritize clear invariants, decoupling read/write paths, and testing against production scale.`
         );
-      } else if (mode === 'regenerate' && (suggestedAnswer || activeQuestion)) {
+      } else if (mode === 'regenerate') {
+        if (settings.persona === 'job') {
+          setSuggestedAnswer(
+            `In a recent initiative, I aligned cross-functional teams around measurable KPIs, resolved architectural bottlenecks, and delivered the core milestone ahead of timeline.`
+          );
+        } else {
+          setSuggestedAnswer(
+            `I approach this by isolating the core invariants, applying a two-pointer or frequency hash map for O(N) linear time, and validating edge cases.`
+          );
+        }
+      } else {
         setSuggestedAnswer(
-          `My approach focuses on establishing clear architectural boundaries, optimizing for O(N) time complexity, and validating all edge cases.`
+          `I approach this methodically by clarifying the operational constraints, architecting for low latency, and delivering clean, maintainable code.`
         );
       }
     } finally {
@@ -156,19 +204,21 @@ export default function App() {
     }
   };
 
-  // Start / Stop Interview listening
+  // Start / Stop Interview listening with automatic speech detection & pause answering
   const handleToggleInterview = async () => {
     if (isListening) {
       // Stop session
       if (speechManagerRef.current) {
         speechManagerRef.current.stopListening();
       }
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+      }
       setIsListening(false);
       setAudioLevel(0);
     } else {
-      // Start session - clear placeholder sample so user gets fresh active listening
+      // Start session
       setCurrentTranscript('');
-      setSuggestedAnswer('');
       setIsListening(true);
       setSessionDurationSec(0);
 
@@ -176,25 +226,33 @@ export default function App() {
         speechManagerRef.current = new CopilotSpeechManager();
       }
 
+      const onSpeechDetected = (text: string) => {
+        if (!text || !text.trim()) return;
+        const cleanText = text.trim();
+        setCurrentTranscript(cleanText);
+
+        if (silenceTimerRef.current) {
+          clearTimeout(silenceTimerRef.current);
+        }
+
+        // Automatic Answer Trigger on Speech Pause (1.2s of silence)
+        if (cleanText.length >= 8) {
+          silenceTimerRef.current = setTimeout(() => {
+            fetchAnswer(cleanText, 'generate');
+          }, 1200);
+        }
+      };
+
       await speechManagerRef.current.startListening({
         audioSource: settings.audioInputSource || 'mic',
         onInterimText: (text) => {
-          setCurrentTranscript(text);
-          if (silenceTimerRef.current) {
-            clearTimeout(silenceTimerRef.current);
-          }
+          onSpeechDetected(text);
         },
         onFinalText: (text) => {
-          setCurrentTranscript(text);
-          if (silenceTimerRef.current) {
-            clearTimeout(silenceTimerRef.current);
-          }
-          silenceTimerRef.current = setTimeout(() => {
-            fetchAnswer(text, 'generate');
-          }, 1200);
+          onSpeechDetected(text);
         },
         onError: (err) => {
-          console.warn('Speech recognition warning:', err);
+          console.warn('Speech recognition status:', err);
         },
         onAudioLevel: (level) => {
           setAudioLevel(level);
@@ -203,12 +261,12 @@ export default function App() {
     }
   };
 
-  // Action handlers
+  // Action handlers (Regenerate, Shorter, Rephrase, Custom)
   const handleAction = (
     action: 'generate' | 'shorter' | 'rephrase' | 'regenerate',
     customPrompt?: string
   ) => {
-    const q = customPrompt || currentTranscript;
+    const q = customPrompt || currentTranscript || '';
     fetchAnswer(q, action);
   };
 

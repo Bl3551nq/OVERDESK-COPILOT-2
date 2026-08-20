@@ -1,19 +1,23 @@
 import { PersonaType, SentenceLength, AIModelChoice } from '../types';
 
+export const DEFAULT_CLOUD_BACKEND = 'https://ais-dev-4lemfiuufuegchaty5ng22-930700759373.europe-west2.run.app';
+
 export function getApiBaseUrl(): string {
   // 1. If custom backend URL is saved in localStorage, use that
-  const customUrl = localStorage.getItem('overdesk_custom_backend_url');
-  if (customUrl && customUrl.trim().startsWith('http')) {
-    return customUrl.trim().replace(/\/+$/, '');
-  }
+  try {
+    const customUrl = localStorage.getItem('overdesk_custom_backend_url');
+    if (customUrl && customUrl.trim().startsWith('http')) {
+      return customUrl.trim().replace(/\/+$/, '');
+    }
+  } catch (e) {}
 
   // 2. If running inside standard HTTP/HTTPS web app (e.g. cloud preview or local dev server)
-  if (typeof window !== 'undefined' && window.location.origin && window.location.origin.startsWith('http')) {
+  if (typeof window !== 'undefined' && window.location?.origin && window.location.origin.startsWith('http')) {
     return window.location.origin;
   }
 
-  // 3. Fallback origin
-  return '';
+  // 3. Fallback origin for Electron desktop apps running on file:// or local environment
+  return DEFAULT_CLOUD_BACKEND;
 }
 
 export interface CopilotAnswerRequest {

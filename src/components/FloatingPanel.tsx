@@ -102,6 +102,13 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
     } catch (e) {}
   }, [panelHeight]);
 
+  // Reset active action when generation completes
+  useEffect(() => {
+    if (!isGenerating) {
+      setActiveAction(null);
+    }
+  }, [isGenerating]);
+
   // Bottom resize drag handler (strictly resizes only from bottom downwards, bounded between ORIGINAL_HEIGHT and 1.5x ORIGINAL_HEIGHT)
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -180,38 +187,47 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
     setResumeParsing(true);
     const fileName = file.name;
     const isPdf = file.type === 'application/pdf' || fileName.toLowerCase().endsWith('.pdf');
+    const isImage =
+      file.type.startsWith('image/') ||
+      /\.(png|jpe?g|webp|bmp|tiff|gif)$/i.test(fileName);
 
     try {
-      if (isPdf) {
+      if (isPdf || isImage) {
         const reader = new FileReader();
         reader.onload = async (ev) => {
           try {
             const base64 = ev.target?.result as string;
-            // Set 12s safety timeout promise
-            const parsePromise = apiFetch<{ summary?: string }>('/api/copilot/parse-resume', {
+            const mimeType = isPdf
+              ? 'application/pdf'
+              : file.type || (fileName.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg');
+
+            // Send full document / photo for comprehensive extraction
+            const parsePromise = apiFetch<{ summary?: string; error?: string }>('/api/copilot/parse-resume', {
               fileBase64: base64,
-              mimeType: 'application/pdf',
+              mimeType,
             });
 
             const timeoutPromise = new Promise<{ summary: string }>((resolve) =>
               setTimeout(() => {
                 resolve({
-                  summary: `Profile extracted from ${fileName}: Experienced professional with strong technical foundations, problem-solving track record, and collaborative communication skills.`,
+                  summary: `## 👤 CANDIDATE PROFILE (${fileName})\n- **Status:** Loaded from ${fileName}\n- **Background:** Comprehensive experience uploaded and ready for live interview assistance.`,
                 });
-              }, 12000)
+              }, 18000)
             );
 
             const data = await Promise.race([parsePromise, timeoutPromise]);
+            const fullProfile = data?.summary || `## CANDIDATE PROFILE (${fileName})\nExperience extracted and loaded.`;
+
             onUpdateSettings({
               resumeFileName: fileName,
-              candidateSummary:
-                data?.summary || `Profile extracted from ${fileName}. Experience loaded into live interview context.`,
+              candidateSummary: fullProfile,
+              resumeRawText: fullProfile,
             });
           } catch (err) {
-            console.error('PDF parsing error:', err);
+            console.error('Resume parsing error:', err);
             onUpdateSettings({
               resumeFileName: fileName,
-              candidateSummary: `Resume: ${fileName}. Core experience ready for tailored question answering.`,
+              candidateSummary: `## CANDIDATE RESUME (${fileName})\nLoaded for interview contextualization.`,
             });
           } finally {
             setResumeParsing(false);
@@ -222,7 +238,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
           setResumeParsing(false);
           onUpdateSettings({
             resumeFileName: fileName,
-            candidateSummary: `Resume: ${fileName} loaded.`,
+            candidateSummary: `## CANDIDATE RESUME (${fileName})\nFile loaded.`,
           });
         };
 
@@ -236,16 +252,17 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
         const timeoutPromise = new Promise<{ summary: string }>((resolve) =>
           setTimeout(() => {
             resolve({
-              summary: text.slice(0, 500),
+              summary: text,
             });
-          }, 10000)
+          }, 15000)
         );
 
         const data = await Promise.race([parsePromise, timeoutPromise]);
+        const fullProfile = data?.summary || text;
         onUpdateSettings({
           resumeFileName: fileName,
           resumeRawText: text,
-          candidateSummary: data?.summary || text.slice(0, 500),
+          candidateSummary: fullProfile,
         });
         setResumeParsing(false);
       }
@@ -253,7 +270,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
       console.error('Resume upload parsing error:', err);
       onUpdateSettings({
         resumeFileName: fileName,
-        candidateSummary: `Resume ${fileName} uploaded. Context ready.`,
+        candidateSummary: `Resume ${fileName} uploaded.`,
       });
       setResumeParsing(false);
     } finally {
@@ -505,9 +522,20 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                   )}
                 </div>
 
-                <div className={`${transcriptFontClass} leading-relaxed text-white/95 min-h-[46px] flex items-center font-normal`}>
+                <div className={`${transcriptFontClass} leading-relaxed text-white/95 min-h-[46px] flex items-center justify-between gap-2 font-normal`}>
                   {currentTranscript ? (
-                    <span className="italic font-medium">"{currentTranscript}"</span>
+                    <div className="flex-1 flex items-center justify-between gap-2">
+                      <span className="italic font-medium text-white">"{currentTranscript}"</span>
+                      <button
+                        onClick={() => onAction('generate', currentTranscript)}
+                        disabled={isGenerating}
+                        className="px-2 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-neutral-950 text-[10.5px] font-bold transition-all shadow shrink-0 flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        title="Generate answer for this question immediately"
+                      >
+                        <Sparkles className="w-3 h-3 text-neutral-950" />
+                        <span>Answer Now</span>
+                      </button>
+                    </div>
                   ) : isListening ? (
                     <div className="space-y-1">
                       <span className="text-emerald-300 text-xs flex items-center gap-1.5">
@@ -521,9 +549,21 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                       )}
                     </div>
                   ) : (
-                    <span className="text-neutral-400 text-xs">
-                      Press "Start Interview" to listen live, or select a question below.
-                    </span>
+                    <div className="w-full flex items-center justify-between gap-2">
+                      <span className="text-neutral-400 text-xs">
+                        Press "Start Interview" to listen live, or test:
+                      </span>
+                      <button
+                        onClick={() =>
+                          onSelectPresetQuestion(
+                            'How do you optimize system performance and handle high concurrency bottlenecks in production?'
+                          )
+                        }
+                        className="px-2 py-0.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/15 text-[10px] text-emerald-300 font-medium transition-colors cursor-pointer shrink-0"
+                      >
+                        🎙️ Test Speech
+                      </button>
+                    </div>
                   )}
                 </div>
 
@@ -797,7 +837,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="text-[11px] font-bold tracking-wider text-emerald-300">
-                    RESUME / CANDIDATE CONTEXT
+                    RESUME / CANDIDATE CONTEXT (PDF, IMAGE & DOCS)
                   </label>
                   {settings.resumeFileName && (
                     <span className="text-[10px] text-emerald-400 font-medium">
@@ -808,32 +848,86 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
 
                 <div
                   onClick={() => fileInputRef.current?.click()}
-                  className="p-3 rounded-xl border border-dashed border-white/30 bg-white/5 hover:bg-white/10 transition-colors flex items-center justify-center gap-2 text-neutral-300 cursor-pointer"
+                  className={`p-3 rounded-xl border border-dashed transition-all flex items-center justify-center gap-2 text-neutral-300 cursor-pointer ${
+                    resumeParsing
+                      ? 'border-emerald-400 bg-emerald-500/10 animate-pulse'
+                      : 'border-white/30 bg-white/5 hover:bg-white/10 hover:border-emerald-400/60'
+                  }`}
                 >
-                  <Upload className="w-4 h-4 text-emerald-400" />
-                  <span className="text-xs">
+                  <Upload className={`w-4 h-4 ${resumeParsing ? 'text-emerald-300 animate-spin' : 'text-emerald-400'}`} />
+                  <span className="text-xs font-medium">
                     {resumeParsing ? (
-                      'Analyzing resume with Gemini...'
+                      'Analyzing complete resume with Gemini (Reading all pages & images)...'
                     ) : settings.resumeFileName ? (
-                      `Replace ${settings.resumeFileName}`
+                      `Replace ${settings.resumeFileName} (PDF, Image, DOCX, TXT)`
                     ) : (
-                      'Upload résumé (PDF, DOCX, TXT)'
+                      'Upload résumé (PDF, Image/Screenshot, DOCX, TXT)'
                     )}
                   </span>
                   <input
                     type="file"
                     ref={fileInputRef}
                     onChange={handleFileUpload}
-                    accept=".pdf,.docx,.txt,.md"
+                    accept=".pdf,.png,.jpg,.jpeg,.webp,.docx,.txt,.md"
                     className="hidden"
                   />
+                </div>
+
+                {/* Toolbar for Resume Box */}
+                <div className="flex items-center justify-between text-[10px] text-neutral-400 px-0.5">
+                  <span>
+                    {settings.candidateSummary
+                      ? `${settings.candidateSummary.length} chars • ${settings.candidateSummary.split('\n').length} lines loaded`
+                      : 'No resume context loaded yet'}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {settings.candidateSummary && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!settings.candidateSummary || resumeParsing) return;
+                            setResumeParsing(true);
+                            try {
+                              const res = await apiFetch<{ summary?: string }>('/api/copilot/parse-resume', {
+                                rawText: settings.candidateSummary,
+                              });
+                              if (res?.summary) {
+                                onUpdateSettings({ candidateSummary: res.summary });
+                              }
+                            } catch (e) {
+                              console.warn('Re-structure note:', e);
+                            } finally {
+                              setResumeParsing(false);
+                            }
+                          }}
+                          className="text-emerald-400 hover:text-emerald-300 underline cursor-pointer"
+                        >
+                          ✨ Re-Structure with AI
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onUpdateSettings({
+                              resumeFileName: undefined,
+                              candidateSummary: '',
+                              resumeRawText: '',
+                            });
+                          }}
+                          className="text-red-400 hover:text-red-300 cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
 
                 <textarea
                   value={settings.candidateSummary}
                   onChange={(e) => onUpdateSettings({ candidateSummary: e.target.value })}
-                  placeholder="Or paste your summary/experience (e.g. 5 yrs React/Node, Led payment team at Fintech, Scaled to 1M DAU)..."
-                  className="w-full h-16 p-2.5 rounded-xl bg-black/20 border border-white/15 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-400/50 resize-none font-sans"
+                  placeholder="Your full candidate background, work history, tech stack, and key metrics will appear here in full. You can also paste or edit anytime..."
+                  className="w-full h-32 p-2.5 rounded-xl bg-black/30 border border-white/15 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-400/50 resize-y font-mono leading-relaxed"
                 />
               </div>
 
@@ -846,7 +940,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                   value={settings.interviewContext}
                   onChange={(e) => onUpdateSettings({ interviewContext: e.target.value })}
                   placeholder="e.g. Senior Backend Role at Stripe, emphasis on distributed transactions, Postgres, Redis, and high concurrency..."
-                  className="w-full h-16 p-2.5 rounded-xl bg-black/20 border border-white/15 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-400/50 resize-none font-sans"
+                  className="w-full h-16 p-2.5 rounded-xl bg-black/20 border border-white/15 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-400/50 resize-y font-sans"
                 />
               </div>
 
