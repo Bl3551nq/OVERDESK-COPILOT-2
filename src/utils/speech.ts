@@ -1,6 +1,6 @@
-// Real-Time Speech Recognition & Robust Multi-Engine Audio Capture for Overdesk Copilot
-// Optimized for browser-based platforms (Mercor, MicroAI, HireVue, Karat, etc.)
-// Features: Web Audio API, Web Speech API, Background Keep-Alive, WakeLock & Fullscreen Auto-Resume
+// Real-Time Speech Recognition & High-Sensitivity Audio Capture for Overdesk Copilot
+// Optimized for web-based interview platforms (Mercor, MicroAI, HireVue, Karat, etc.)
+// Uses MediaRecorder (WebM/Opus) + PCM WAV fallback with Gemini 3.7 Flash & Web Speech API
 
 import { apiFetch } from './apiClient';
 
@@ -13,51 +13,16 @@ export interface SpeechListenerOptions {
   onStatusChange?: (status: 'listening' | 'interviewer_speaking' | 'stopped' | 'tab_connected') => void;
 }
 
-// Convert float PCM samples to a 100% valid 16kHz 16-bit Mono WAV file
-function encodeWAV(samples: Float32Array, sampleRate: number = 16000): Blob {
-  const buffer = new ArrayBuffer(44 + samples.length * 2);
-  const view = new DataView(buffer);
-
-  const writeString = (offset: number, str: string) => {
-    for (let i = 0; i < str.length; i++) {
-      view.setUint8(offset + i, str.charCodeAt(i));
-    }
-  };
-
-  writeString(0, 'RIFF');
-  view.setUint32(4, 36 + samples.length * 2, true);
-  writeString(8, 'WAVE');
-  writeString(12, 'fmt ');
-  view.setUint32(16, 16, true); // SubChunk1Size (16 for PCM)
-  view.setUint16(20, 1, true); // AudioFormat (1 = PCM)
-  view.setUint16(22, 1, true); // NumChannels (1 = Mono)
-  view.setUint32(24, sampleRate, true); // SampleRate
-  view.setUint32(28, sampleRate * 2, true); // ByteRate (SampleRate * NumChannels * BitsPerSample/8)
-  view.setUint16(32, 2, true); // BlockAlign (NumChannels * BitsPerSample/8)
-  view.setUint16(34, 16, true); // BitsPerSample (16 bits)
-  writeString(36, 'data');
-  view.setUint32(40, samples.length * 2, true);
-
-  let offset = 44;
-  for (let i = 0; i < samples.length; i++, offset += 2) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-  }
-
-  return new Blob([view], { type: 'audio/wav' });
-}
-
 export class CopilotSpeechManager {
   private isListening = false;
   private audioContext: AudioContext | null = null;
   private activeStream: MediaStream | null = null;
   private analyser: AnalyserNode | null = null;
-  private scriptProcessor: ScriptProcessorNode | null = null;
+  private mediaRecorder: MediaRecorder | null = null;
+  private audioChunks: Blob[] = [];
   private animFrameId: number | null = null;
   private intervalCheckId: NodeJS.Timeout | null = null;
   private recognition: any = null;
-  private circularPreRoll: Float32Array[] = [];
-  private recordedPcmChunks: Float32Array[] = [];
   private isSpeaking = false;
   private speechStartTime = 0;
   private speechSilenceTimeout: NodeJS.Timeout | null = null;
@@ -89,54 +54,14 @@ export class CopilotSpeechManager {
     } catch (e) {}
   }
 
-  // Send PCM audio chunk to Gemini 3.7 Flash for instant Speech-To-Text
-  private async processPcmBuffer(options: SpeechListenerOptions) {
-    if (this.recordedPcmChunks.length === 0 || this.isTranscribing) return;
+  // Send recorded speech blob to Gemini 3.7 Flash for instant transcription
+  private async sendAudioForTranscription(audioBlob: Blob, options: SpeechListenerOptions) {
+    if (audioBlob.size < 1200 || this.isTranscribing) return;
 
     try {
       this.isTranscribing = true;
-
-      // Include pre-roll buffer if available to ensure first syllables are captured
-      const allChunks = [...this.circularPreRoll, ...this.recordedPcmChunks];
-      let totalLength = 0;
-      for (const chunk of allChunks) {
-        totalLength += chunk.length;
-      }
-
-      // Minimum ~0.4 seconds of audio (6400 samples at 16kHz)
-      if (totalLength < 6400) {
-        this.recordedPcmChunks = [];
-        this.isTranscribing = false;
-        return;
-      }
-
-      const mergedSamples = new Float32Array(totalLength);
-      let offset = 0;
-      for (const chunk of allChunks) {
-        mergedSamples.set(chunk, offset);
-        offset += chunk.length;
-      }
-
-      this.recordedPcmChunks = [];
-
-      const sampleRate = this.audioContext?.sampleRate || 16000;
-      let finalSamples = mergedSamples;
-      if (sampleRate !== 16000) {
-        const ratio = sampleRate / 16000;
-        const newLength = Math.round(mergedSamples.length / ratio);
-        finalSamples = new Float32Array(newLength);
-        for (let i = 0; i < newLength; i++) {
-          finalSamples[i] = mergedSamples[Math.min(mergedSamples.length - 1, Math.round(i * ratio))];
-        }
-      }
-
-      const wavBlob = encodeWAV(finalSamples, 16000);
-      if (wavBlob.size < 800) {
-        this.isTranscribing = false;
-        return;
-      }
-
       const reader = new FileReader();
+
       reader.onloadend = async () => {
         try {
           const base64 = reader.result as string;
@@ -145,9 +70,10 @@ export class CopilotSpeechManager {
             return;
           }
 
+          const mimeType = audioBlob.type || 'audio/webm';
           const res = await apiFetch<{ text?: string }>('/api/copilot/transcribe-audio', {
             audioBase64: base64,
-            mimeType: 'audio/wav',
+            mimeType,
           });
 
           if (res?.text && res.text.trim()) {
@@ -162,15 +88,26 @@ export class CopilotSpeechManager {
             }
           }
         } catch (e) {
-          console.warn('Speech transcription note:', e);
+          console.warn('Transcription API error:', e);
         } finally {
           this.isTranscribing = false;
         }
       };
-      reader.readAsDataURL(wavBlob);
+
+      reader.readAsDataURL(audioBlob);
     } catch (e) {
       this.isTranscribing = false;
     }
+  }
+
+  // Slice and flush current MediaRecorder buffer for transcription
+  private flushSpeechBuffer(options: SpeechListenerOptions) {
+    if (!this.mediaRecorder || this.audioChunks.length === 0) return;
+
+    const mime = this.mediaRecorder.mimeType || 'audio/webm';
+    const blob = new Blob(this.audioChunks, { type: mime });
+    this.audioChunks = [];
+    this.sendAudioForTranscription(blob, options);
   }
 
   public async startListening(options: SpeechListenerOptions): Promise<boolean> {
@@ -178,8 +115,7 @@ export class CopilotSpeechManager {
       this.stopListening();
     }
 
-    this.recordedPcmChunks = [];
-    this.circularPreRoll = [];
+    this.audioChunks = [];
     this.isSpeaking = false;
     this.lastTranscribedText = '';
 
@@ -188,31 +124,24 @@ export class CopilotSpeechManager {
     await this.requestWakeLock();
 
     try {
-      // 1. Acquire Stream (Mercor / MicroAI / Tab Audio vs Microphone)
+      // 1. Acquire Media Stream
       if (requestedSource === 'system' && navigator.mediaDevices?.getDisplayMedia) {
+        // Tab / System audio stream for web interview platforms (Mercor, MicroAI, etc.)
         this.activeStream = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            displaySurface: 'browser',
-            width: { max: 1 },
-            height: { max: 1 },
-            frameRate: { max: 1 },
-          } as any,
+          video: true,
           audio: {
             echoCancellation: false,
             noiseSuppression: false,
             autoGainControl: false,
-            channelCount: 2,
           } as any,
           systemAudio: 'include',
-          selfBrowserSurface: 'exclude',
-          surfaceSwitching: 'include',
         } as any);
 
         const audioTracks = this.activeStream.getAudioTracks();
         if (!audioTracks || audioTracks.length === 0) {
           this.stopListening();
           options.onError(
-            'No Tab / PC Audio was selected. When the browser prompt opens, choose your Mercor / MicroAI tab and make sure "Share tab audio" is enabled.'
+            'No Tab Audio was shared. Please click Start Interview again, select your Mercor/MicroAI tab, and check "Also share tab audio".'
           );
           return false;
         }
@@ -224,25 +153,26 @@ export class CopilotSpeechManager {
           };
         });
       } else {
-        // Auto / Mic mode: request standard audio stream
+        // Auto / Mic mode: request primary audio input
         if (navigator.mediaDevices?.getUserMedia) {
-          try {
-            this.activeStream = await navigator.mediaDevices.getUserMedia({
-              audio: {
-                echoCancellation: false,
-                noiseSuppression: false,
-                autoGainControl: true,
-              },
-            });
-          } catch (micErr) {
-            console.warn('Microphone stream notice:', micErr);
-          }
+          this.activeStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: true,
+            },
+          });
         }
       }
 
-      // 2. Setup AudioContext & Analyser for Waveform, VAD and PCM WAV recording
+      if (!this.activeStream) {
+        options.onError('Could not obtain an audio input stream.');
+        return false;
+      }
+
+      // 2. Setup AudioContext & High-Sensitivity Analyser for Voice Activity Detection
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (AudioCtx && this.activeStream) {
+      if (AudioCtx) {
         this.audioContext = new AudioCtx();
         if (this.audioContext.state === 'suspended') {
           await this.audioContext.resume().catch(() => {});
@@ -250,42 +180,41 @@ export class CopilotSpeechManager {
 
         this.analyser = this.audioContext.createAnalyser();
         this.analyser.fftSize = 256;
+        this.analyser.smoothingTimeConstant = 0.3;
 
         const sourceNode = this.audioContext.createMediaStreamSource(this.activeStream);
         sourceNode.connect(this.analyser);
 
-        // Setup ScriptProcessor for direct PCM audio capture
-        try {
-          this.scriptProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
-          this.scriptProcessor.onaudioprocess = (e) => {
-            if (!this.isListening) return;
-            // Ensure audio context remains active even if page lost focus / went full screen
-            if (this.audioContext && this.audioContext.state === 'suspended') {
-              this.audioContext.resume().catch(() => {});
-            }
-
-            const inputData = e.inputBuffer.getChannelData(0);
-            const copy = new Float32Array(inputData.length);
-            copy.set(inputData);
-
-            if (this.isSpeaking) {
-              this.recordedPcmChunks.push(copy);
-              if (this.recordedPcmChunks.length > 25 && Date.now() - this.speechStartTime > 4500) {
-                this.speechStartTime = Date.now();
-                this.processPcmBuffer(options);
-              }
+        // 3. Setup MediaRecorder for native continuous chunking
+        const audioStreamOnly = new MediaStream(this.activeStream.getAudioTracks());
+        let mimeType = 'audio/webm;codecs=opus';
+        if (typeof MediaRecorder !== 'undefined') {
+          if (!MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+            if (MediaRecorder.isTypeSupported('audio/webm')) {
+              mimeType = 'audio/webm';
+            } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+              mimeType = 'audio/mp4';
             } else {
-              this.circularPreRoll.push(copy);
-              if (this.circularPreRoll.length > 4) {
-                this.circularPreRoll.shift();
-              }
+              mimeType = '';
             }
-          };
+          }
 
-          sourceNode.connect(this.scriptProcessor);
-          this.scriptProcessor.connect(this.audioContext.destination);
-        } catch (procErr) {
-          console.warn('Audio processor notice:', procErr);
+          try {
+            this.mediaRecorder = mimeType ? new MediaRecorder(audioStreamOnly, { mimeType }) : new MediaRecorder(audioStreamOnly);
+            this.mediaRecorder.ondataavailable = (e) => {
+              if (e.data && e.data.size > 0) {
+                this.audioChunks.push(e.data);
+                // Keep only last 15 chunks (~3-4s buffer)
+                if (this.audioChunks.length > 20) {
+                  this.audioChunks.shift();
+                }
+              }
+            };
+            // Slice chunks every 200ms
+            this.mediaRecorder.start(200);
+          } catch (recErr) {
+            console.warn('MediaRecorder notice:', recErr);
+          }
         }
 
         // Real-Time Audio Level & VAD Detection Loop
@@ -293,7 +222,6 @@ export class CopilotSpeechManager {
         const checkAudioLevel = () => {
           if (!this.isListening || !this.analyser) return;
 
-          // Auto-resume suspended AudioContext if full-screen mode tried to sleep it
           if (this.audioContext && this.audioContext.state === 'suspended') {
             this.audioContext.resume().catch(() => {});
           }
@@ -304,14 +232,15 @@ export class CopilotSpeechManager {
             sum += dataArray[i];
           }
           const average = sum / dataArray.length;
-          const normalized = Math.min(1, average / 45);
+          // High-sensitivity scale (detects quiet speech & headphone tab audio)
+          const normalized = Math.min(1, average / 28);
 
           if (options.onAudioLevel) {
             options.onAudioLevel(normalized);
           }
 
-          // Voice Activity threshold
-          if (normalized > 0.02) {
+          // Voice Activity Threshold (> 0.015)
+          if (normalized > 0.015) {
             if (!this.isSpeaking) {
               this.isSpeaking = true;
               this.speechStartTime = Date.now();
@@ -327,7 +256,7 @@ export class CopilotSpeechManager {
             if (!this.speechSilenceTimeout) {
               this.speechSilenceTimeout = setTimeout(() => {
                 this.isSpeaking = false;
-                this.processPcmBuffer(options);
+                this.flushSpeechBuffer(options);
               }, 450);
             }
           }
@@ -340,7 +269,7 @@ export class CopilotSpeechManager {
         };
         updateLoop();
 
-        // Backup setInterval check (keeps VAD alive even if requestAnimationFrame throttles in fullscreen background)
+        // Interval heartbeat keeps VAD alive in background tabs
         this.intervalCheckId = setInterval(() => {
           if (this.isListening) {
             checkAudioLevel();
@@ -348,7 +277,7 @@ export class CopilotSpeechManager {
         }, 100);
       }
 
-      // 3. Initialize Web Speech Recognition alongside (if available and not purely tab audio)
+      // 4. Web Speech API Integration (instant streaming text for standard speech)
       const SpeechRecognition =
         (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
@@ -440,6 +369,13 @@ export class CopilotSpeechManager {
       this.speechSilenceTimeout = null;
     }
 
+    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+      try {
+        this.mediaRecorder.stop();
+      } catch (e) {}
+      this.mediaRecorder = null;
+    }
+
     if (this.recognition) {
       try {
         this.recognition.abort();
@@ -450,13 +386,6 @@ export class CopilotSpeechManager {
     if (this.animFrameId) {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
-    }
-
-    if (this.scriptProcessor) {
-      try {
-        this.scriptProcessor.disconnect();
-      } catch (e) {}
-      this.scriptProcessor = null;
     }
 
     if (this.activeStream) {
