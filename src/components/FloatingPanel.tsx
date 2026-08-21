@@ -36,13 +36,14 @@ import { apiFetch } from '../utils/apiClient';
 interface FloatingPanelProps {
   settings: UserSettings;
   onUpdateSettings: (newSettings: Partial<UserSettings>) => void;
-  onStartDrag?: (event: React.PointerEvent | React.MouseEvent) => void;
+  onStartDrag?: (event: React.PointerEvent<Element>) => void;
   isListening: boolean;
   onToggleInterview: () => void;
   currentTranscript: string;
   suggestedAnswer: string;
   isGenerating: boolean;
   audioLevel: number;
+  autoAnswerCountdown?: number | null;
   onAction: (action: 'generate' | 'shorter' | 'rephrase' | 'regenerate', customPrompt?: string) => void;
   onOpenScreenModal: () => void;
   onOpenStealthModal: () => void;
@@ -62,6 +63,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
   suggestedAnswer,
   isGenerating,
   audioLevel,
+  autoAnswerCountdown,
   onAction,
   onOpenScreenModal,
   onOpenStealthModal,
@@ -312,7 +314,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
         height: isMinimized ? 'auto' : `${panelHeight}px`,
         opacity: settings.windowOpacity || 1,
       }}
-      className="relative w-full rounded-[20px] overflow-hidden flex flex-col bg-[#0d0f12] border border-neutral-800/80 shadow-[0_8px_24px_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.08)] text-neutral-100 transition-opacity duration-200 select-none"
+      className="relative w-full rounded-[20px] overflow-hidden flex flex-col bg-black border border-neutral-800 shadow-[0_12px_36px_rgba(0,0,0,0.8),inset_0_1px_1px_rgba(255,255,255,0.06)] text-neutral-100 transition-opacity duration-200 select-none"
     >
       {/* ================= TITLEBAR (Dark & Stealth & Native OS Drag Anchor) ================= */}
       <div
@@ -322,7 +324,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
             onStartDrag?.(e);
           }
         }}
-        className="app-drag-header relative z-10 flex items-center justify-between px-3.5 py-2.5 border-b border-neutral-800/90 cursor-grab active:cursor-grabbing bg-neutral-950/95"
+        className="app-drag-header relative z-10 flex items-center justify-between px-3.5 py-2.5 border-b border-neutral-800 cursor-grab active:cursor-grabbing bg-black/95"
       >
         <div className="flex items-center gap-2.5 pointer-events-none">
           <div className="relative flex items-center justify-center">
@@ -346,8 +348,8 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
               viewBox="0 0 512 512"
               className="w-4 h-4 text-sky-400 inline-block drop-shadow-[0_1px_4px_rgba(0,132,255,0.4)]"
               xmlns="http://www.w3.org/2000/svg"
-              title="Verified Overdesk Pro (System Tray & Memory Active)"
             >
+              <title>Verified Overdesk Pro</title>
               <path
                 fill="#0084FF"
                 d="M512 256c0 28.5-12.7 54.1-32.9 71.4 6.7 27.8 2.2 57.7-12.6 81.3-17.7 28.3-46.7 45.4-78.2 47.9-10.4 26.7-31.5 47.8-58.2 58.2-31.8 12.4-67.4 5.3-92.1-17.8-24.7 23.1-60.3 30.2-92.1 17.8-26.7 10.4-47.8 31.5-58.2 58.2-31.5 2.5-60.5 19.6-78.2-47.9-14.8-23.6-19.3-53.5-12.6-81.3C12.7 310.1 0 284.5 0 256s12.7-54.1 32.9-71.4c-6.7-27.8-2.2-57.7 12.6-81.3 17.7-28.3 46.7-45.4 78.2-47.9 10.4-26.7 31.5-47.8 58.2-58.2 31.8-12.4 67.4-5.3 92.1 17.8 24.7-23.1 60.3-30.2 92.1-17.8 26.7 10.4 47.8 31.5 58.2 58.2 31.5 2.5 60.5 19.6 78.2 47.9 14.8 23.6 19.3 53.5 12.6 81.3C499.3 201.9 512 227.5 512 256z"
@@ -427,42 +429,26 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
               {/* Top pill row */}
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
-                  <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-white/15 border border-white/40 text-white flex items-center gap-1 shadow-sm">
+                  <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-neutral-900 border border-neutral-700 text-neutral-200 flex items-center gap-1 shadow-sm">
                     <span>{currentPersonaInfo.icon}</span>
                     {currentPersonaInfo.title}
                   </span>
 
-                  {/* Audio Source Quick Toggle */}
-                  <button
-                    onClick={() => {
-                      const nextSource =
-                        settings.audioInputSource === 'mic'
-                          ? 'system'
-                          : settings.audioInputSource === 'system'
-                          ? 'mixed'
-                          : 'mic';
-                      onUpdateSettings({ audioInputSource: nextSource });
-                    }}
-                    title="Toggle Audio Source (Microphone vs Earpiece/Meeting Tab Audio)"
-                    className={`px-2.5 py-1 rounded-full text-xs font-medium border flex items-center gap-1 transition-all cursor-pointer ${
-                      settings.audioInputSource === 'system'
-                        ? 'bg-sky-500/20 border-sky-400/50 text-sky-200 shadow-sm'
-                        : settings.audioInputSource === 'mixed'
-                        ? 'bg-purple-500/20 border-purple-400/50 text-purple-200'
-                        : 'bg-white/5 border-white/15 text-neutral-300 hover:text-white'
-                    }`}
+                  {/* Audio Status Badge */}
+                  <span
+                    className="px-2.5 py-1 rounded-full text-xs font-semibold border flex items-center gap-1 bg-neutral-900 border-neutral-700 text-neutral-300 shadow-sm"
                   >
                     <span>
                       {settings.audioInputSource === 'system'
-                        ? '🎧 Earpiece/Tab'
-                        : settings.audioInputSource === 'mixed'
-                        ? '🎛️ Dual'
-                        : '🎙️ Mic'}
+                        ? '🎧 PC Audio'
+                        : settings.audioInputSource === 'mic'
+                        ? '🎙️ Mic Only'
+                        : '🎙️ Live Speech'}
                     </span>
-                  </button>
+                  </span>
 
                   {isListening && (
-                    <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-medium bg-rose-500/20 border border-rose-500/30 text-rose-300">
+                    <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-medium bg-rose-500/20 border border-rose-500/40 text-rose-300">
                       {formatTimer(sessionDurationSec)}
                     </span>
                   )}
@@ -472,7 +458,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                   <button
                     onClick={onOpenScreenModal}
                     title="Read Screen Coding/Design Challenge"
-                    className="p-1.5 rounded-xl bg-white/5 hover:bg-white/15 border border-white/15 text-emerald-300 hover:text-emerald-200 transition-colors flex items-center gap-1 text-xs font-medium cursor-pointer"
+                    className="p-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-emerald-400 hover:text-emerald-300 transition-colors flex items-center gap-1 text-xs font-medium cursor-pointer"
                   >
                     <Camera className="w-3.5 h-3.5" />
                     <span className="hidden sm:inline">OCR</span>
@@ -481,28 +467,26 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                   <button
                     onClick={() => setCurrentView('settings')}
                     title="Settings"
-                    className="p-1.5 rounded-xl bg-white/5 hover:bg-white/15 border border-white/15 text-neutral-300 hover:text-white transition-colors cursor-pointer"
+                    className="p-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-neutral-300 hover:text-white transition-colors cursor-pointer"
                   >
                     <SettingsIcon className="w-4 h-4" />
                   </button>
                 </div>
               </div>
 
-              {/* LISTENING CARD */}
-              <div className="p-3.5 rounded-2xl bg-white/[0.06] border border-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.15)] flex flex-col gap-2">
-                <div className="flex items-center justify-between text-[11px] font-bold tracking-wider text-emerald-300/90">
+              {/* LIVE TRANSCRIPT CARD */}
+              <div className="p-3.5 rounded-2xl bg-neutral-950 border border-neutral-800/90 shadow-sm flex flex-col gap-2">
+                <div className="flex items-center justify-between text-[11px] font-bold tracking-wider text-emerald-400">
                   <div className="flex items-center gap-1.5">
                     {isListening ? (
                       <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
                     ) : (
-                      <MicOff className="w-3 h-3 text-neutral-400" />
+                      <MicOff className="w-3 h-3 text-neutral-500" />
                     )}
                     <span>
                       {isListening
-                        ? settings.audioInputSource === 'system'
-                          ? 'LISTENING TO TAB / EARPIECE AUDIO'
-                          : 'LISTENING TO INTERVIEW AUDIO'
-                        : 'INTERVIEW AUDIO TRANSCRIPT'}
+                        ? 'LIVE INTERVIEW TRANSCRIPT'
+                        : 'INTERVIEW TRANSCRIPT'}
                     </span>
                   </div>
 
@@ -522,122 +506,88 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                   )}
                 </div>
 
-                <div className={`${transcriptFontClass} leading-relaxed text-white/95 min-h-[46px] flex items-center justify-between gap-2 font-normal`}>
+                <div className={`${transcriptFontClass} leading-relaxed text-neutral-100 min-h-[44px] flex items-center justify-between gap-2 font-normal`}>
                   {currentTranscript ? (
-                    <div className="flex-1 flex items-center justify-between gap-2">
-                      <span className="italic font-medium text-white">"{currentTranscript}"</span>
-                      <button
-                        onClick={() => onAction('generate', currentTranscript)}
-                        disabled={isGenerating}
-                        className="px-2 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-neutral-950 text-[10.5px] font-bold transition-all shadow shrink-0 flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                        title="Generate answer for this question immediately"
-                      >
-                        <Sparkles className="w-3 h-3 text-neutral-950" />
-                        <span>Answer Now</span>
-                      </button>
+                    <div className="flex-1 flex flex-col gap-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="italic font-medium text-white">"{currentTranscript}"</span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {autoAnswerCountdown !== null && autoAnswerCountdown !== undefined && autoAnswerCountdown > 0 && (
+                            <div className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 text-[10px] font-bold flex items-center gap-1 animate-pulse">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                              <span>Auto-answering in {autoAnswerCountdown.toFixed(1)}s</span>
+                            </div>
+                          )}
+                          <button
+                            onClick={() => onAction('generate', currentTranscript)}
+                            disabled={isGenerating}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-neutral-950 text-[11px] font-bold transition-all shadow shrink-0 flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                            title="Generate answer for this question immediately"
+                          >
+                            <Sparkles className="w-3 h-3 text-neutral-950" />
+                            <span>{isGenerating ? 'Generating...' : 'Answer Now'}</span>
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   ) : isListening ? (
-                    <div className="space-y-1">
-                      <span className="text-emerald-300 text-xs flex items-center gap-1.5">
+                    <div className="flex items-center justify-between w-full text-xs text-emerald-400/90">
+                      <span className="flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                        Listening for interviewer's speech...
+                        Listening for speech in real-time...
                       </span>
-                      {settings.audioInputSource === 'system' && (
-                        <p className="text-[10px] text-sky-300/90 font-sans">
-                          🎧 Earpiece mode: Audio is captured directly from your meeting tab.
-                        </p>
-                      )}
+                      <span className="text-[10px] text-neutral-500 font-mono">
+                        Auto-answers upon silence
+                      </span>
                     </div>
                   ) : (
                     <div className="w-full flex items-center justify-between gap-2">
-                      <span className="text-neutral-400 text-xs">
-                        Press "Start Interview" to listen live, or test:
+                      <span className="text-neutral-500 text-xs">
+                        Click "Start Interview" to begin real-time speech capture.
                       </span>
-                      <button
-                        onClick={() =>
-                          onSelectPresetQuestion(
-                            'How do you optimize system performance and handle high concurrency bottlenecks in production?'
-                          )
-                        }
-                        className="px-2 py-0.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/15 text-[10px] text-emerald-300 font-medium transition-colors cursor-pointer shrink-0"
-                      >
-                        🎙️ Test Speech
-                      </button>
                     </div>
                   )}
                 </div>
 
-                {/* Quick preset question trigger & inline direct ask bar */}
-                <div className="pt-2 border-t border-white/10 space-y-1.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="relative flex-1">
-                      <button
-                        onClick={() => setShowPresetsDropdown(!showPresetsDropdown)}
-                        className="w-full text-left px-2.5 py-1 rounded-lg bg-black/20 hover:bg-black/30 border border-white/10 text-[11px] text-neutral-300 flex items-center justify-between gap-1 transition-colors cursor-pointer"
-                      >
-                        <span className="truncate">Sample Questions ({currentPersonaInfo.title})</span>
-                        <ChevronDown className="w-3 h-3 text-neutral-400 shrink-0" />
-                      </button>
-
-                      {showPresetsDropdown && (
-                        <div className="absolute left-0 right-0 bottom-full mb-1.5 z-30 bg-neutral-900/95 border border-white/20 rounded-xl shadow-2xl p-1.5 space-y-1 max-h-48 overflow-y-auto backdrop-blur-md">
-                          {SAMPLE_QUESTIONS.map((q) => (
-                            <button
-                              key={q.id}
-                              onClick={() => {
-                                onSelectPresetQuestion(q.question);
-                                setShowPresetsDropdown(false);
-                              }}
-                              className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-[11.5px] text-neutral-200 hover:text-white transition-colors cursor-pointer"
-                            >
-                              <span className="font-semibold text-emerald-400 block text-[10px]">
-                                {q.category}
-                              </span>
-                              <span className="line-clamp-2">{q.question}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        if (customQuestionInput.trim()) {
-                          onSelectPresetQuestion(customQuestionInput.trim());
-                          setCustomQuestionInput('');
-                        }
-                      }}
-                      className="flex-1 flex items-center gap-1"
+                {/* Direct question ask bar */}
+                <div className="pt-2 border-t border-neutral-800/80">
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (customQuestionInput.trim()) {
+                        onSelectPresetQuestion(customQuestionInput.trim());
+                        setCustomQuestionInput('');
+                      }
+                    }}
+                    className="flex items-center gap-1.5"
+                  >
+                    <input
+                      type="text"
+                      value={customQuestionInput}
+                      onChange={(e) => setCustomQuestionInput(e.target.value)}
+                      placeholder="Type or paste question..."
+                      className="w-full px-3 py-1.5 rounded-lg bg-black border border-neutral-800 text-xs text-white placeholder-neutral-600 focus:outline-none focus:border-emerald-500"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!customQuestionInput.trim()}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:opacity-30 text-neutral-950 font-bold text-xs transition-colors cursor-pointer shrink-0"
                     >
-                      <input
-                        type="text"
-                        value={customQuestionInput}
-                        onChange={(e) => setCustomQuestionInput(e.target.value)}
-                        placeholder="Type question or paste..."
-                        className="w-full px-2 py-1 rounded-lg bg-black/30 border border-white/15 text-[11px] text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-400"
-                      />
-                      <button
-                        type="submit"
-                        disabled={!customQuestionInput.trim()}
-                        className="px-2 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 text-neutral-950 font-bold text-[11px] transition-colors cursor-pointer shrink-0"
-                      >
-                        Ask
-                      </button>
-                    </form>
-                  </div>
+                      Ask
+                    </button>
+                  </form>
                 </div>
               </div>
 
               {/* SUGGESTED RESPONSE CARD */}
-              <div className="p-4 rounded-2xl bg-white/[0.09] border border-white/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.3),0_4px_24px_rgba(0,0,0,0.25)] flex flex-col gap-2.5">
+              <div className="p-4 rounded-2xl bg-neutral-950 border border-neutral-800/90 shadow-sm flex flex-col gap-2.5">
                 <div className="flex items-center justify-between text-[11px] font-bold tracking-wider text-white">
-                  <div className="flex items-center gap-1.5 text-emerald-300">
+                  <div className="flex items-center gap-1.5 text-emerald-400">
                     <Sparkles className="w-3.5 h-3.5" />
                     <span>SUGGESTED RESPONSE</span>
                     {isGenerating && (
                       <span className="text-[10px] text-emerald-400 font-normal animate-pulse">
-                        (Generating in ~1.2s...)
+                        (Generating...)
                       </span>
                     )}
                   </div>
@@ -646,7 +596,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                     <button
                       onClick={handleToggleWhisper}
                       title={isWhispering ? 'Stop earpiece whisper' : 'Whisper response into earpiece'}
-                      className="p-1 rounded-md hover:bg-white/10 text-neutral-300 hover:text-white transition-colors"
+                      className="p-1 rounded-md hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
                     >
                       {isWhispering ? (
                         <VolumeX className="w-3.5 h-3.5 text-rose-400" />
@@ -657,7 +607,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                     <button
                       onClick={handleCopyAnswer}
                       title="Copy response"
-                      className="p-1 rounded-md hover:bg-white/10 text-neutral-300 hover:text-white transition-colors"
+                      className="p-1 rounded-md hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
                     >
                       {copied ? (
                         <Check className="w-3.5 h-3.5 text-emerald-400" />
@@ -668,18 +618,18 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                   </div>
                 </div>
 
-                <div className={`${answerFontClass} leading-relaxed text-white/95 min-h-[90px] font-normal whitespace-pre-line`}>
+                <div className={`${answerFontClass} leading-relaxed text-neutral-100 min-h-[90px] font-normal whitespace-pre-line`}>
                   {suggestedAnswer ? (
                     suggestedAnswer
                   ) : (
-                    <span className="text-neutral-400 text-xs italic">
-                      Responses will appear here instantly as soon as the interviewer speaks or finishes a question.
+                    <span className="text-neutral-600 text-xs italic">
+                      AI responses will appear here in real-time as speech is captured.
                     </span>
                   )}
                 </div>
 
                 {/* Quick Action buttons */}
-                <div className="flex items-center gap-1.5 pt-2 border-t border-white/15">
+                <div className="flex items-center gap-1.5 pt-2 border-t border-neutral-800/80">
                   <button
                     onClick={() => {
                       setActiveAction('regenerate');
@@ -688,8 +638,8 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                     disabled={isGenerating || !suggestedAnswer}
                     className={`flex-1 py-1.5 px-2 rounded-xl border text-xs font-medium flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-40 ${
                       isGenerating && activeAction === 'regenerate'
-                        ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-200'
-                        : 'bg-white/5 hover:bg-white/15 border-white/15 text-neutral-200'
+                        ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                        : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-800 text-neutral-300'
                     }`}
                   >
                     <RotateCcw className={`w-3 h-3 text-emerald-400 ${isGenerating && activeAction === 'regenerate' ? 'animate-spin' : ''}`} />
@@ -704,8 +654,8 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                     disabled={isGenerating || !suggestedAnswer}
                     className={`flex-1 py-1.5 px-2 rounded-xl border text-xs font-medium flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-40 ${
                       isGenerating && activeAction === 'shorter'
-                        ? 'bg-sky-500/20 border-sky-500/40 text-sky-200'
-                        : 'bg-white/5 hover:bg-white/15 border-white/15 text-neutral-200'
+                        ? 'bg-sky-500/20 border-sky-500/40 text-sky-300'
+                        : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-800 text-neutral-300'
                     }`}
                   >
                     <Scissors className={`w-3 h-3 text-sky-400 ${isGenerating && activeAction === 'shorter' ? 'animate-pulse' : ''}`} />
@@ -720,8 +670,8 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                     disabled={isGenerating || !suggestedAnswer}
                     className={`flex-1 py-1.5 px-2 rounded-xl border text-xs font-medium flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-40 ${
                       isGenerating && activeAction === 'rephrase'
-                        ? 'bg-amber-500/20 border-amber-500/40 text-amber-200'
-                        : 'bg-white/5 hover:bg-white/15 border-white/15 text-neutral-200'
+                        ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
+                        : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-800 text-neutral-300'
                     }`}
                   >
                     <Sparkles className={`w-3 h-3 text-amber-400 ${isGenerating && activeAction === 'rephrase' ? 'animate-pulse' : ''}`} />
@@ -1001,6 +951,63 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                 </div>
               </div>
 
+              {/* Window Size / UI Scale (0.7x, 1x, 1.2x) */}
+              <div className="space-y-1.5 pt-2 border-t border-white/15">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11.5px] font-bold tracking-wider text-emerald-300 flex items-center gap-1.5">
+                    <Maximize2 className="w-3.5 h-3.5 text-sky-400" />
+                    WINDOW SIZE / UI SCALE
+                  </label>
+                  <span className="text-[10px] font-mono text-sky-300 bg-sky-500/20 px-2 py-0.5 rounded-full border border-sky-400/30 font-semibold">
+                    {settings.uiScale ? `${settings.uiScale}x` : '1x'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ uiScale: 0.7 })}
+                    className={`py-2 px-2 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 ${
+                      settings.uiScale === 0.7
+                        ? 'bg-sky-500/25 border-sky-400/80 text-white font-bold shadow-[0_0_12px_rgba(56,189,248,0.25)] ring-1 ring-sky-400/50'
+                        : 'bg-white/5 border-white/10 text-neutral-400 hover:text-white hover:bg-white/10'
+                    }`}
+                  >
+                    <span className="text-xs font-bold leading-none text-sky-300">0.7x</span>
+                    <span className="text-[10px] font-medium leading-tight">Compact (70%)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ uiScale: 1 })}
+                    className={`py-2 px-2 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 ${
+                      (settings.uiScale ?? 1) === 1
+                        ? 'bg-emerald-500/25 border-emerald-400/80 text-white font-bold shadow-[0_0_12px_rgba(16,185,129,0.25)] ring-1 ring-emerald-400/50'
+                        : 'bg-white/5 border-white/10 text-neutral-400 hover:text-white hover:bg-white/10'
+                    }`}
+                  >
+                    <span className="text-xs font-bold leading-none text-emerald-300">1x</span>
+                    <span className="text-[10px] font-medium leading-tight">Default (100%)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ uiScale: 1.2 })}
+                    className={`py-2 px-2 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 ${
+                      settings.uiScale === 1.2
+                        ? 'bg-purple-500/25 border-purple-400/80 text-white font-bold shadow-[0_0_12px_rgba(168,85,247,0.25)] ring-1 ring-purple-400/50'
+                        : 'bg-white/5 border-white/10 text-neutral-400 hover:text-white hover:bg-white/10'
+                    }`}
+                  >
+                    <span className="text-xs font-bold leading-none text-purple-300">1.2x</span>
+                    <span className="text-[10px] font-medium leading-tight">Expanded (120%)</span>
+                  </button>
+                </div>
+                <p className="text-[9.5px] text-neutral-400">
+                  Scales the overlay window dimensions, buttons, and layout proportionally.
+                </p>
+              </div>
+
               {/* Sentence Length Selection */}
               <div className="space-y-1.5">
                 <label className="text-[11.5px] font-bold tracking-wider text-emerald-300">
@@ -1023,76 +1030,72 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
                 </div>
               </div>
 
-              {/* Audio Input Source (Earpiece & Microphone Selection) */}
-              <div className="space-y-2 pt-2 border-t border-white/15">
+              {/* Audio Capture Mode Selector (Mercor, MicroAI, Web Platforms) */}
+              <div className="space-y-2 pt-2 border-t border-neutral-800">
                 <div className="flex items-center justify-between">
-                  <label className="text-[11.5px] font-bold tracking-wider text-emerald-300">
-                    AUDIO SOURCE (EARPIECE & HEADPHONE SUPPORT)
+                  <label className="text-[11.5px] font-bold tracking-wider text-emerald-400">
+                    AUDIO CAPTURE ENGINE
                   </label>
-                  <span className="text-[10px] text-sky-400 font-medium">
+                  <span className="text-[10px] text-neutral-400 font-mono">
                     {settings.audioInputSource === 'system'
-                      ? '🎧 Earpiece Mode'
-                      : settings.audioInputSource === 'mixed'
-                      ? '🎛️ Dual Audio'
-                      : '🎙️ Microphone'}
+                      ? 'PC / Tab Audio'
+                      : settings.audioInputSource === 'mic'
+                      ? 'Microphone'
+                      : 'Auto Speech'}
                   </span>
                 </div>
 
                 <div className="grid grid-cols-3 gap-1.5">
                   <button
                     type="button"
-                    onClick={() => onUpdateSettings({ audioInputSource: 'mic' })}
-                    className={`p-2 rounded-xl border text-left flex flex-col gap-1 transition-all cursor-pointer ${
-                      (settings.audioInputSource || 'mic') === 'mic'
-                        ? 'bg-emerald-500/20 border-emerald-400/80 text-white font-semibold'
-                        : 'bg-white/5 border-white/10 text-neutral-400 hover:text-white'
-                    }`}
-                  >
-                    <span className="text-xs font-bold flex items-center gap-1">
-                      🎙️ Mic Only
-                    </span>
-                    <span className="text-[9.5px] leading-tight opacity-80">
-                      Standard room & speaker sound
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
                     onClick={() => onUpdateSettings({ audioInputSource: 'system' })}
-                    className={`p-2 rounded-xl border text-left flex flex-col gap-1 transition-all cursor-pointer ${
-                      settings.audioInputSource === 'system'
-                        ? 'bg-sky-500/20 border-sky-400/80 text-white font-semibold shadow-[0_0_12px_rgba(56,189,248,0.2)]'
-                        : 'bg-white/5 border-white/10 text-neutral-400 hover:text-white'
+                    className={`py-2 px-1.5 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 ${
+                      (settings.audioInputSource ?? 'auto') === 'system'
+                        ? 'bg-sky-500/20 border-sky-500/80 text-white font-bold'
+                        : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'
                     }`}
                   >
-                    <span className="text-xs font-bold flex items-center gap-1 text-sky-300">
-                      🎧 Tab / Earpiece
-                    </span>
-                    <span className="text-[9.5px] leading-tight opacity-80">
-                      Meet / Zoom tab directly (No mic spill)
-                    </span>
+                    <span className="text-xs font-bold leading-none">🎧 PC Tab Audio</span>
+                    <span className="text-[9.5px] font-medium leading-tight">Mercor / MicroAI</span>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => onUpdateSettings({ audioInputSource: 'mixed' })}
-                    className={`p-2 rounded-xl border text-left flex flex-col gap-1 transition-all cursor-pointer ${
-                      settings.audioInputSource === 'mixed'
-                        ? 'bg-purple-500/20 border-purple-400/80 text-white font-semibold'
-                        : 'bg-white/5 border-white/10 text-neutral-400 hover:text-white'
+                    onClick={() => onUpdateSettings({ audioInputSource: 'auto' })}
+                    className={`py-2 px-1.5 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 ${
+                      (settings.audioInputSource ?? 'auto') === 'auto'
+                        ? 'bg-emerald-500/20 border-emerald-500/80 text-white font-bold'
+                        : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'
                     }`}
                   >
-                    <span className="text-xs font-bold flex items-center gap-1 text-purple-300">
-                      🎛️ Dual Mixed
-                    </span>
-                    <span className="text-[9.5px] leading-tight opacity-80">
-                      Both Mic & Meeting Tab combined
-                    </span>
+                    <span className="text-xs font-bold leading-none">🎙️ Auto</span>
+                    <span className="text-[9.5px] font-medium leading-tight">Live Speech</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ audioInputSource: 'mic' })}
+                    className={`py-2 px-1.5 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 ${
+                      settings.audioInputSource === 'mic'
+                        ? 'bg-purple-500/20 border-purple-500/80 text-white font-bold'
+                        : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    <span className="text-xs font-bold leading-none">🎤 Mic Only</span>
+                    <span className="text-[9.5px] font-medium leading-tight">Direct Mic</span>
                   </button>
                 </div>
 
-                <div className="p-2.5 rounded-xl bg-sky-950/40 border border-sky-500/20 text-[10.5px] text-sky-200/90 leading-relaxed">
-                  <strong className="text-sky-300">💡 How Earpiece Mode works:</strong> When you click <em>Start Interview</em>, select your Google Meet/Zoom tab and ensure <strong>"Share tab audio"</strong> is checked. The copilot captures the interviewer's voice directly from the browser tab with crystal clarity even when you're wearing in-ear headphones.
+                <div className="p-2.5 rounded-xl bg-neutral-900/90 border border-neutral-800 text-[10.5px] text-neutral-300 leading-relaxed space-y-1">
+                  <div className="font-semibold text-sky-300 flex items-center gap-1">
+                    <span>💡 For Mercor, MicroAI, HireVue & Web Interviews:</span>
+                  </div>
+                  <p>
+                    • <strong>Wearing headphones?</strong> Use <strong>"PC Tab Audio"</strong>: When you click <em>Start Interview</em>, choose your <strong>Mercor / MicroAI Chrome tab</strong> and make sure <strong>"Also share tab audio"</strong> is checked. The copilot captures digital audio directly from the platform.
+                  </p>
+                  <p>
+                    • <strong>Using laptop speakers?</strong> Use <strong>"Auto"</strong> or <strong>"Mic Only"</strong> to listen to the room audio.
+                  </p>
                 </div>
               </div>
 

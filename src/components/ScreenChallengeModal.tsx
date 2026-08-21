@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, X, Check, Loader2, Sparkles, Code2, AlertCircle, Upload, Eye, Clipboard, Scissors } from 'lucide-react';
+import { Camera, X, Check, Loader2, Sparkles, Code2, AlertCircle, Upload, Eye, Clipboard, Scissors, RefreshCw, Layers, Terminal, Layout, HelpCircle, FileText } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import { PersonaType } from '../types';
 import { apiFetch } from '../utils/apiClient';
 
@@ -10,6 +11,8 @@ interface ScreenChallengeModalProps {
   interviewContext: string;
   onApplySolutionAsAnswer: (verbalResponse: string) => void;
 }
+
+export type ChallengeCategory = 'auto' | 'coding' | 'system_design' | 'frontend_ui' | 'multiple_choice' | 'case_study';
 
 // Helper: Compress and resize image for ultra-fast, lightweight transmission
 const compressImageDataUrl = (dataUrl: string, maxWidth = 1600, maxHeight = 1200): Promise<string> => {
@@ -52,18 +55,21 @@ export const ScreenChallengeModal: React.FC<ScreenChallengeModalProps> = ({
   const [capturing, setCapturing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [challengeCategory, setChallengeCategory] = useState<ChallengeCategory>('auto');
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [copied, setCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const processAndSetImage = async (rawUrl: string) => {
+    // Clear previous analysis result immediately upon new capture
+    setAnalysisResult(null);
+    setError(null);
     try {
       const compressed = await compressImageDataUrl(rawUrl);
       setCapturedImage(compressed);
     } catch {
       setCapturedImage(rawUrl);
     }
-    setError(null);
-    setAnalysisResult(null);
   };
 
   // Listen for Clipboard Paste (Ctrl+V) anywhere while the modal is open
@@ -100,6 +106,7 @@ export const ScreenChallengeModal: React.FC<ScreenChallengeModalProps> = ({
 
   const handleCaptureScreen = async () => {
     setError(null);
+    setAnalysisResult(null);
     setCapturing(true);
 
     try {
@@ -158,38 +165,40 @@ export const ScreenChallengeModal: React.FC<ScreenChallengeModalProps> = ({
       if (err.name === 'NotAllowedError') {
         setError('Screen share selection was cancelled. You can also press Win+Shift+S and Ctrl+V to paste the challenge.');
       } else {
-        setError(
-          err.message ||
-            'Could not capture screen. Tip: Press Win+Shift+S to take a snip, then press Ctrl+V here to paste!'
-        );
+        setError(err.message || 'Failed to capture screen image.');
       }
     } finally {
       setCapturing(false);
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      if (typeof ev.target?.result === 'string') {
-        await processAndSetImage(ev.target.result);
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDraggingOver(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file && file.type.startsWith('image/')) {
+    setError(null);
+    setAnalysisResult(null);
+
+    const files = e.dataTransfer.files;
+    if (files.length > 0 && files[0].type.startsWith('image/')) {
       const reader = new FileReader();
-      reader.onload = async (ev) => {
-        if (typeof ev.target?.result === 'string') {
-          await processAndSetImage(ev.target.result);
+      reader.onload = async (event) => {
+        if (typeof event.target?.result === 'string') {
+          await processAndSetImage(event.target.result);
+        }
+      };
+      reader.readAsDataURL(files[0]);
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      setError(null);
+      setAnalysisResult(null);
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        if (typeof event.target?.result === 'string') {
+          await processAndSetImage(event.target.result);
         }
       };
       reader.readAsDataURL(file);
@@ -202,10 +211,25 @@ export const ScreenChallengeModal: React.FC<ScreenChallengeModalProps> = ({
     setError(null);
     setAnalysisResult(null);
 
+    let specificPrompt = '';
+    if (challengeCategory === 'coding') {
+      specificPrompt = 'Focus on optimal algorithmic code solution, clean syntax, edge cases, and Big-O complexity.';
+    } else if (challengeCategory === 'system_design') {
+      specificPrompt = 'Focus on system design architecture, components breakdown, data flow, APIs, caching, database choice, and scaling tradeoffs.';
+    } else if (challengeCategory === 'frontend_ui') {
+      specificPrompt = 'Focus on UI/UX frontend implementation, component hierarchy, responsive layout, state management, and accessibility.';
+    } else if (challengeCategory === 'multiple_choice') {
+      specificPrompt = 'Identify the multiple choice or test question, provide the exact right option/answer, and concise explanation why.';
+    } else if (challengeCategory === 'case_study') {
+      specificPrompt = 'Provide structured business/case study consulting analysis, framework, key takeaways, and strategic recommendations.';
+    }
+
     try {
-      const data = await apiFetch<{ analysis?: string; isFallback?: boolean; error?: string }>('/api/copilot/analyze-screen', {
+      const data = await apiFetch<{ analysis?: string; error?: string }>('/api/copilot/analyze-screen', {
         imageBase64: capturedImage,
+        prompt: specificPrompt,
         persona,
+        challengeType: challengeCategory,
         interviewContext,
       });
 
@@ -217,43 +241,18 @@ export const ScreenChallengeModal: React.FC<ScreenChallengeModalProps> = ({
         throw new Error('No solution returned from model');
       }
     } catch (err: any) {
-      console.warn('Analysis note (providing fallback template):', err);
-
-      // Smart resilient fallback solution so candidate is never blocked in live interviews
-      const fallbackAnalysis = `### Identified Challenge Solution
-
-**Verbal Explanation (What to say to the interviewer):**
-"I approach this problem by first clarifying edge cases (such as null, empty collections, or duplicate items). The optimal pattern leverages a two-pointer sliding window combined with a frequency hash map to guarantee linear $O(N)$ runtime and minimal auxiliary memory allocation."
-
----
-
-### Optimal Implementation
-\`\`\`typescript
-function solveOptimalChallenge<T>(input: T[]): { success: boolean; result: any } {
-  if (!input || input.length === 0) return { success: true, result: null };
-
-  // 1. Maintain tracking map for O(1) instant lookups
-  const lookup = new Map<any, number>();
-  
-  for (let i = 0; i < input.length; i++) {
-    const current = input[i];
-    lookup.set(current, (lookup.get(current) || 0) + 1);
-  }
-
-  return { success: true, result: Array.from(lookup.entries()) };
-}
-\`\`\`
-
----
-
-### Complexity Analysis
-- **Time Complexity:** $O(N)$ — Single linear traversal through input elements.
-- **Space Complexity:** $O(min(N, U))$ — Auxiliary hash map bounded by unique elements.`;
-
-      setAnalysisResult(fallbackAnalysis);
+      console.warn('Analysis error:', err);
+      setError(err?.message || 'Failed to analyze screenshot. Please check the image and try again.');
     } finally {
       setAnalyzing(false);
     }
+  };
+
+  const handleCopyResult = () => {
+    if (!analysisResult) return;
+    navigator.clipboard.writeText(analysisResult);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   return (
@@ -274,7 +273,7 @@ function solveOptimalChallenge<T>(input: T[]): { success: boolean; result: any }
           <div className="flex items-center gap-2">
             <Eye className="w-4 h-4 text-emerald-400" />
             <h3 className="text-sm font-semibold text-white tracking-wide">
-              Screen Vision · Coding & Design Challenge Solver
+              Screen Vision · Universal Challenge & Problem Solver
             </h3>
           </div>
           <button
@@ -288,8 +287,45 @@ function solveOptimalChallenge<T>(input: T[]): { success: boolean; result: any }
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
           <div className="text-xs text-neutral-300 leading-relaxed bg-white/5 p-3 rounded-xl border border-white/10">
-            <span className="font-semibold text-emerald-300">Live OCR & Challenge Solver:</span>{' '}
-            Snap or paste the interviewer's coding problem (LeetCode, HackerRank, IDE, bug, or design wireframe). Gemini Vision analyzes the screen and generates both the <span className="text-white font-medium">verbal talking points</span> to say out loud and the <span className="text-white font-medium">optimal code/design solution</span>.
+            <span className="font-semibold text-emerald-300">Live Multimodal Problem Solver:</span>{' '}
+            Snap or paste any coding problem, system architecture diagram, UI design, multiple-choice question, or case study. Gemini Vision identifies the specific challenge and gives you both <span className="text-white font-medium">spoken talking points</span> and the <span className="text-white font-medium">complete step-by-step solution</span>.
+          </div>
+
+          {/* Category Selector */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-medium text-neutral-400 uppercase tracking-wider">
+              Challenge Focus Type
+            </label>
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+              {[
+                { id: 'auto', label: 'Auto Detect', icon: Sparkles },
+                { id: 'coding', label: 'Coding / DSA', icon: Terminal },
+                { id: 'system_design', label: 'System Design', icon: Layers },
+                { id: 'frontend_ui', label: 'UI / Figma', icon: Layout },
+                { id: 'multiple_choice', label: 'Test / MCQ', icon: HelpCircle },
+                { id: 'case_study', label: 'Case Study', icon: FileText },
+              ].map((cat) => {
+                const Icon = cat.icon;
+                const isSelected = challengeCategory === cat.id;
+                return (
+                  <button
+                    key={cat.id}
+                    onClick={() => {
+                      setChallengeCategory(cat.id as ChallengeCategory);
+                      if (analysisResult) setAnalysisResult(null);
+                    }}
+                    className={`px-2 py-1.5 rounded-lg text-[11px] font-medium flex flex-col items-center gap-1 transition-all cursor-pointer border ${
+                      isSelected
+                        ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-200'
+                        : 'bg-white/5 border-white/10 text-neutral-400 hover:text-neutral-200 hover:bg-white/10'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    <span className="truncate">{cat.label}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Action buttons */}
@@ -342,9 +378,20 @@ function solveOptimalChallenge<T>(input: T[]): { success: boolean; result: any }
           </div>
 
           {error && (
-            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{error}</span>
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+              {capturedImage && (
+                <button
+                  onClick={handleAnalyze}
+                  className="px-2.5 py-1 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 font-medium text-[11px] flex items-center gap-1 cursor-pointer"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  Retry
+                </button>
+              )}
             </div>
           )}
 
@@ -361,6 +408,7 @@ function solveOptimalChallenge<T>(input: T[]): { success: boolean; result: any }
                   onClick={() => {
                     setCapturedImage(null);
                     setAnalysisResult(null);
+                    setError(null);
                   }}
                   className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/70 hover:bg-black/90 text-white text-xs border border-white/20 cursor-pointer"
                   title="Remove Image"
@@ -378,7 +426,7 @@ function solveOptimalChallenge<T>(input: T[]): { success: boolean; result: any }
                   {analyzing ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin text-neutral-900" />
-                      Analyzing Challenge with Gemini Vision...
+                      Analyzing Problem with Gemini Vision...
                     </>
                   ) : (
                     <>
@@ -399,19 +447,30 @@ function solveOptimalChallenge<T>(input: T[]): { success: boolean; result: any }
                   <Code2 className="w-4 h-4" />
                   Solution & Talking Points
                 </div>
-                <button
-                  onClick={() => {
-                    onApplySolutionAsAnswer(analysisResult);
-                    onClose();
-                  }}
-                  className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  Use as Active Response
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleCopyResult}
+                    className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/15 text-neutral-300 text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Clipboard className="w-3.5 h-3.5" />}
+                    <span>{copied ? 'Copied' : 'Copy'}</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      onApplySolutionAsAnswer(analysisResult);
+                      onClose();
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    Use as Active Response
+                  </button>
+                </div>
               </div>
-              <div className="p-4 rounded-xl bg-white/5 border border-white/10 text-xs text-neutral-200 leading-relaxed font-mono whitespace-pre-wrap max-h-72 overflow-y-auto">
-                {analysisResult}
+              <div className="p-4 rounded-xl bg-white/5 border border-white/10 text-xs text-neutral-200 leading-relaxed font-sans max-h-80 overflow-y-auto prose prose-invert prose-xs max-w-none">
+                <div className="markdown-body">
+                  <ReactMarkdown>{analysisResult}</ReactMarkdown>
+                </div>
               </div>
             </div>
           )}

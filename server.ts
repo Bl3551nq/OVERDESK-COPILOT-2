@@ -188,13 +188,14 @@ CRITICAL RULES:
     }
   });
 
-  // Multimodal Screen / Coding Challenge Analyzer
+  // Multimodal Screen / Universal Challenge & Problem Analyzer
   app.post('/api/copilot/analyze-screen', async (req, res) => {
     try {
       const {
         imageBase64,
-        prompt = 'Solve this coding or design challenge on screen. Provide the optimal solution, clean code, time/space complexity, and a 2-sentence spoken answer to explain it to the interviewer.',
+        prompt: userPrompt = '',
         persona = 'coding',
+        challengeType = 'auto',
         interviewContext = '',
       } = req.body;
 
@@ -202,77 +203,81 @@ CRITICAL RULES:
         return res.status(400).json({ error: 'Image data is required' });
       }
 
-      const cleanBase64 = imageBase64.replace(/^data:image\/[a-z]+;base64,/, '');
+      // Robust Data URL parsing for png, jpeg, webp, gif, bmp
+      let effectiveMime = 'image/jpeg';
+      const mimeMatch = imageBase64.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,/);
+      if (mimeMatch && mimeMatch[1]) {
+        effectiveMime = mimeMatch[1];
+      }
+
+      const cleanBase64 = imageBase64.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '').trim();
       const ai = getGenAI();
 
       const imagePart = {
         inlineData: {
-          mimeType: 'image/png',
+          mimeType: effectiveMime,
           data: cleanBase64,
         },
       };
 
-      const textPart = {
-        text: `You are looking at the candidate's screen during an interview challenge (e.g., LeetCode, IDE, code snippet, bug, system diagram, or UI design).
+      const systemDirective = `You are an expert real-time AI interview assistant analyzing a candidate's screen capture during a live interview or assessment.
+The image on screen may contain ANY of the following:
+1. Coding / Algorithms (e.g. LeetCode, HackerRank, CodeSignal, IDE, Terminal, VS Code, debugging, SQL queries, database schemas).
+2. System Design & Architecture (e.g. architecture diagrams, AWS/GCP cloud topology, distributed system block diagrams, microservices flow, ER diagrams).
+3. UI/UX & Frontend Design (e.g. Figma mockups, CSS/HTML layouts, wireframes, user flow diagrams, component hierarchies).
+4. Data Science, Math & ML (e.g. formulas, graphs, statistics questions, Python data pipelines, machine learning model architectures).
+5. Behavioral, Case Study or Multiple-Choice Assessment (e.g. McKinsey/consulting case slides, online assessment test questions, situational judgment scenarios).
 
-Instructions:
-1. Transcribe/identify the exact problem or code shown.
-2. Provide a short, direct 2-3 sentence verbal explanation the candidate can say to the interviewer.
-3. Provide the clean, optimal solution (with well-formatted code if applicable) and Time/Space complexity analysis.
+YOUR TASK:
+Carefully inspect the screenshot image. Identify the EXACT question, challenge, diagram, or problem presented in THIS SPECIFIC IMAGE.
 
-Context: ${interviewContext || 'Technical interview'}
-Persona focus: ${persona}`,
-      };
+Provide your output strictly structured with these clear sections:
+
+### 1. Problem / Question Identified
+- **Title / Summary:** [State the specific problem name or question asked]
+- **Key Constraints & Requirements:** [List the exact inputs, outputs, constraints, or goals shown in the image]
+
+### 2. Spoken Talking Points (What to say out loud right now)
+"[Provide 2-3 natural, articulate first-person sentences the candidate can immediately say to the interviewer to explain their line of thinking, assumptions, and proposed solution.]"
+
+### 3. Step-by-Step Solution & Implementation
+- If Coding/Algorithmic: Provide the clean, production-ready code implementation (in the language indicated on screen or TypeScript/Python by default) with helpful comments, followed by **Time Complexity: O(...)** and **Space Complexity: O(...)**.
+- If System Design: Provide the structured architectural breakdown (Core Components, Data Storage, Ingestion/Read APIs, Scalability & Bottleneck Mitigations, Trade-offs).
+- If UI/UX/Product Design: Provide the design rationale, component hierarchy, accessibility/UX considerations, and responsive layout approach.
+- If Multiple Choice / Test Question: State the **Correct Answer** clearly with concise justification.
+- If Case Study / Business Analysis: Provide the structured framework, root cause analysis, and quantitative/strategic recommendation.
+
+Context from candidate: ${interviewContext || 'Job Interview'}
+Candidate Persona: ${persona}
+${userPrompt ? `Specific candidate instruction: ${userPrompt}` : ''}`;
 
       const response = await ai.models.generateContent({
         model: 'gemini-3.7-flash',
-        contents: { parts: [imagePart, textPart] },
+        contents: {
+          parts: [
+            imagePart,
+            { text: systemDirective }
+          ]
+        },
         config: {
-          temperature: 0.4,
+          temperature: 0.2,
         },
       });
 
+      const analysisText = response.text || '';
+      if (!analysisText.trim()) {
+        throw new Error('Empty response from vision model');
+      }
+
       return res.json({
-        analysis: response.text || 'Screen analyzed successfully.',
+        analysis: analysisText.trim(),
         timestamp: Date.now(),
       });
     } catch (err: any) {
-      console.error('Error analyzing screen with Gemini:', err?.message || err);
+      console.error('Error analyzing screen with Gemini Vision:', err?.message || err);
 
-      // Smart fallback solution for coding challenge when API is rate-limited or quota reached
-      const fallbackAnalysis = `### Identified Challenge Solution
-
-**Verbal Explanation (What to say right now):**
-"I approach this problem by first clarifying constraints and identifying edge cases. The optimal strategy uses a Hash Map frequency counter with a two-pointer pass to achieve linear O(N) time complexity and constant auxiliary space without redundant iterations."
-
----
-
-### Optimal Implementation
-\`\`\`typescript
-function solveOptimalChallenge<T>(input: T[]): { success: boolean; result: any } {
-  if (!input || input.length === 0) return { success: true, result: null };
-
-  // 1. Maintain tracking map for O(1) lookups
-  const lookup = new Map<any, number>();
-  
-  for (let i = 0; i < input.length; i++) {
-    const current = input[i];
-    lookup.set(current, (lookup.get(current) || 0) + 1);
-  }
-
-  return { success: true, result: Array.from(lookup.entries()) };
-}
-\`\`\`
-
----
-
-### Complexity Analysis
-- **Time Complexity:** $O(N)$ — Single linear traversal through input elements.
-- **Space Complexity:** $O(min(N, U))$ — Auxiliary hash map bounded by unique elements.`;
-
-      return res.json({
-        analysis: fallbackAnalysis,
-        isFallback: true,
+      return res.status(500).json({
+        error: err?.message || 'Could not analyze screenshot with Vision model',
         timestamp: Date.now(),
       });
     }
@@ -398,6 +403,64 @@ Extract everything thoroughly and accurately so the candidate has their full con
       return res.json({
         summary: fallbackSummary,
         isFallback: true,
+        timestamp: Date.now(),
+      });
+    }
+  });
+
+  // Real-time Audio Transcriber (Handles PC system audio, meeting tab audio, and microphone recordings)
+  app.post('/api/copilot/transcribe-audio', async (req, res) => {
+    try {
+      const { audioBase64, mimeType = 'audio/webm' } = req.body || {};
+
+      if (!audioBase64) {
+        return res.status(400).json({ error: 'Audio data is required' });
+      }
+
+      const cleanBase64 = audioBase64.replace(/^data:[^;]+;base64,/, '').trim();
+      const ai = getGenAI();
+
+      let effectiveMime = mimeType;
+      if (effectiveMime.includes('webm')) {
+        effectiveMime = 'audio/webm';
+      } else if (effectiveMime.includes('wav')) {
+        effectiveMime = 'audio/wav';
+      } else if (effectiveMime.includes('ogg')) {
+        effectiveMime = 'audio/ogg';
+      } else if (effectiveMime.includes('mp4') || effectiveMime.includes('aac')) {
+        effectiveMime = 'audio/mp4';
+      }
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.7-flash',
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: effectiveMime,
+                data: cleanBase64,
+              },
+            },
+            {
+              text: 'You are an accurate live speech-to-text transcriber for a job interview. Transcribe the spoken words from this audio clip verbatim into clean text. Do NOT add any preamble, quotes, timestamps, or explanation. If there is no clear speech or only background static/silence, return an empty response.',
+            },
+          ],
+        },
+        config: {
+          temperature: 0.1,
+        },
+      });
+
+      const transcribed = (response.text || '').trim();
+      return res.json({
+        text: transcribed,
+        timestamp: Date.now(),
+      });
+    } catch (err: any) {
+      console.warn('Audio transcription notice:', err?.message || err);
+      return res.json({
+        text: '',
+        error: err?.message || 'Transcription error',
         timestamp: Date.now(),
       });
     }

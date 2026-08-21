@@ -11,14 +11,15 @@ const DEFAULT_SETTINGS: UserSettings = {
   persona: 'coding',
   modelChoice: 'gemini-3.7-flash',
   fontSize: 'normal',
+  uiScale: 1,
   resumeRawText: '',
-  candidateSummary: 'Senior Software Engineer with 6+ years building distributed cloud systems, high-throughput microservices, React/TypeScript frontends, and scalable databases.',
-  interviewContext: 'Senior Software Engineering Role, distributed architecture, API design, performance optimization, and system resilience.',
+  candidateSummary: '',
+  interviewContext: '',
   sentenceLength: 'medium',
   hideFromScreenShare: true,
   pinAboveFullscreen: true,
   autoTriggerOnSilence: true,
-  audioInputSource: 'mic',
+  audioInputSource: 'auto',
   speechTtsEnabled: false,
   windowOpacity: 0.98,
 };
@@ -30,6 +31,9 @@ export default function App() {
       const saved = localStorage.getItem('overdesk_copilot_settings');
       if (saved) {
         const parsed = JSON.parse(saved);
+        if (!parsed.audioInputSource) {
+          parsed.audioInputSource = 'auto';
+        }
         return { ...DEFAULT_SETTINGS, ...parsed };
       }
     } catch (e) {
@@ -56,14 +60,50 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
   const [sessionDurationSec, setSessionDurationSec] = useState(0);
+  const [autoAnswerCountdown, setAutoAnswerCountdown] = useState<number | null>(null);
 
   // Modals
   const [isScreenModalOpen, setIsScreenModalOpen] = useState(false);
   const [isStealthModalOpen, setIsStealthModalOpen] = useState(false);
 
-  // Speech manager ref
+  // Speech manager & silence timer refs
   const speechManagerRef = useRef<CopilotSpeechManager | null>(null);
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Auto-resume audio processing if browser throttled during fullscreen
+  useEffect(() => {
+    const handleVisibilityOrFocus = () => {
+      if (isListening && speechManagerRef.current) {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          // Trigger keep-alive ping
+        }
+      }
+    };
+
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    window.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    document.addEventListener('fullscreenchange', handleVisibilityOrFocus);
+
+    return () => {
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      window.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      document.removeEventListener('fullscreenchange', handleVisibilityOrFocus);
+    };
+  }, [isListening]);
+
+  const clearSilenceTimers = () => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+    }
+    setAutoAnswerCountdown(null);
+  };
 
   // Persistent storage: LocalStorage + Electron Disk File + Server State Cache
   useEffect(() => {
@@ -112,6 +152,9 @@ export default function App() {
         const electron = (window as any).require?.('electron');
         if (electron?.ipcRenderer) {
           electron.ipcRenderer.invoke('copilot-save-settings', updated).catch(() => {});
+          if (newSettings.uiScale !== undefined) {
+            electron.ipcRenderer.send('set-ui-scale', newSettings.uiScale);
+          }
         }
       } catch (e) {}
 
@@ -211,14 +254,13 @@ export default function App() {
       if (speechManagerRef.current) {
         speechManagerRef.current.stopListening();
       }
-      if (silenceTimerRef.current) {
-        clearTimeout(silenceTimerRef.current);
-      }
+      clearSilenceTimers();
       setIsListening(false);
       setAudioLevel(0);
     } else {
       // Start session
       setCurrentTranscript('');
+      clearSilenceTimers();
       setIsListening(true);
       setSessionDurationSec(0);
 
@@ -231,33 +273,61 @@ export default function App() {
         const cleanText = text.trim();
         setCurrentTranscript(cleanText);
 
-        if (silenceTimerRef.current) {
-          clearTimeout(silenceTimerRef.current);
-        }
+        clearSilenceTimers();
 
-        // Automatic Answer Trigger on Speech Pause (1.2s of silence)
-        if (cleanText.length >= 8) {
+        // Automatic Answer Trigger exactly 2.0s after speech pause
+        if (cleanText.length >= 6) {
+          let remainingMs = 2000;
+          setAutoAnswerCountdown(2.0);
+
+          countdownIntervalRef.current = setInterval(() => {
+            remainingMs -= 100;
+            if (remainingMs <= 0) {
+              if (countdownIntervalRef.current) {
+                clearInterval(countdownIntervalRef.current);
+                countdownIntervalRef.current = null;
+              }
+              setAutoAnswerCountdown(null);
+            } else {
+              setAutoAnswerCountdown(Number((remainingMs / 1000).toFixed(1)));
+            }
+          }, 100);
+
           silenceTimerRef.current = setTimeout(() => {
+            clearSilenceTimers();
             fetchAnswer(cleanText, 'generate');
-          }, 1200);
+          }, 2000);
         }
       };
 
-      await speechManagerRef.current.startListening({
-        audioSource: settings.audioInputSource || 'mic',
+      const started = await speechManagerRef.current.startListening({
+        audioSource: settings.audioInputSource || 'auto',
         onInterimText: (text) => {
           onSpeechDetected(text);
         },
         onFinalText: (text) => {
           onSpeechDetected(text);
         },
+        onStatusChange: (status) => {
+          if (status === 'stopped') {
+            setIsListening(false);
+            setAudioLevel(0);
+          }
+        },
         onError: (err) => {
-          console.warn('Speech recognition status:', err);
+          console.warn('Audio capture status:', err);
+          setIsListening(false);
+          setAudioLevel(0);
         },
         onAudioLevel: (level) => {
           setAudioLevel(level);
         },
       });
+
+      if (!started) {
+        setIsListening(false);
+        setAudioLevel(0);
+      }
     }
   };
 
@@ -295,12 +365,14 @@ export default function App() {
             suggestedAnswer={suggestedAnswer}
             isGenerating={isGenerating}
             audioLevel={audioLevel}
+            autoAnswerCountdown={autoAnswerCountdown}
             onAction={handleAction}
             onOpenScreenModal={() => setIsScreenModalOpen(true)}
             onOpenStealthModal={() => setIsStealthModalOpen(true)}
             sessionDurationSec={sessionDurationSec}
             onSelectPresetQuestion={handleSelectPresetQuestion}
             onResetSession={() => {
+              clearSilenceTimers();
               setCurrentTranscript('');
               setSuggestedAnswer('');
               setSessionDurationSec(0);
@@ -313,15 +385,20 @@ export default function App() {
           dragListener={false}
           dragControls={dragControls}
           dragMomentum={false}
-          initial={{ scale: 0.98, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
           transition={{ duration: 0.2 }}
           className="pointer-events-auto relative z-30 max-w-[420px] w-full"
-          style={{ originY: 0 }}
+          style={{
+            originY: 0,
+            originX: 0.5,
+            transform: `scale(${settings.uiScale || 1})`,
+            transition: 'transform 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
+          }}
         >
           <FloatingPanel
             settings={settings}
-            onStartDrag={(e) => dragControls.start(e)}
+            onStartDrag={(e) => dragControls.start(e as any)}
             onUpdateSettings={handleUpdateSettings}
             isListening={isListening}
             onToggleInterview={handleToggleInterview}
@@ -329,12 +406,14 @@ export default function App() {
             suggestedAnswer={suggestedAnswer}
             isGenerating={isGenerating}
             audioLevel={audioLevel}
+            autoAnswerCountdown={autoAnswerCountdown}
             onAction={handleAction}
             onOpenScreenModal={() => setIsScreenModalOpen(true)}
             onOpenStealthModal={() => setIsStealthModalOpen(true)}
             sessionDurationSec={sessionDurationSec}
             onSelectPresetQuestion={handleSelectPresetQuestion}
             onResetSession={() => {
+              clearSilenceTimers();
               setCurrentTranscript('');
               setSuggestedAnswer('');
               setSessionDurationSec(0);

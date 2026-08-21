@@ -303,6 +303,18 @@ ipcMain.on('pin-above-fullscreen', () => {
   if (mainWindow) pinAboveFullscreen(mainWindow);
 });
 
+// Dynamic window scaling (0.7x, 1x, 1.2x)
+ipcMain.on('set-ui-scale', (event, scale) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const s = typeof scale === 'number' && scale > 0 ? scale : 1;
+    const baseW = 440;
+    const baseH = 680;
+    const newW = Math.round(baseW * s);
+    const newH = Math.round(baseH * s);
+    mainWindow.setSize(newW, newH);
+  }
+});
+
 // Direct High-Resolution Screen Snapping for Challenge Solving
 ipcMain.handle('capture-desktop-screen', async () => {
   try {
